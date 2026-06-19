@@ -11,8 +11,8 @@ from sports2d_automation.reports import (
     angle_statistics,
     collect_quality_diagnostics,
     marker_error_summary,
+    measure_metadata,
     read_mot,
-    read_trc,
     write_excel_report,
     write_html_report,
 )
@@ -105,8 +105,12 @@ class CoreTests(unittest.TestCase):
             html_path = root / "report.html"
             write_html_report(html_path, "demo", [(mot, df)], None, None)
             html_text = html_path.read_text(encoding="utf-8")
-            self.assertIn("Sports2D 交互报告", html_text)
+            self.assertIn("Sports2D 运动学报告", html_text)
+            self.assertIn("重点关节指标", html_text)
+            self.assertIn("角度定义与动作含义", html_text)
             self.assertIn("2D 视频平面角", html_text)
+            self.assertNotIn("markerPlot", html_text)
+            self.assertNotIn("三维标记视图", html_text)
 
             excel_path = root / "report.xlsx"
             write_excel_report(
@@ -118,23 +122,15 @@ class CoreTests(unittest.TestCase):
             )
             self.assertTrue(excel_path.exists())
 
-    def test_trc_y_axis_is_mapped_to_display_z(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            trc = Path(tmp) / "demo_m_person00.trc"
-            trc.write_text(
-                "PathFileType\t4\t(X/Y/Z)\tdemo.trc\n"
-                "DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\n"
-                "60\t60\t1\t2\tm\n"
-                "Frame#\tTime\tHip\t\t\tHead\t\t\n"
-                "\t\tX1\tY1\tZ1\tX2\tY2\tZ2\n"
-                "1\t0.0\t1\t2\t3\t4\t5\t6\n",
-                encoding="utf-8",
-            )
-            data = read_trc(trc)
-            self.assertIsNotNone(data)
-            assert data is not None
-            self.assertEqual(data["marker_frames"][0]["Hip"], [1.0, 3.0, 2.0])
-            self.assertEqual(data["axis_mapping"]["display_z"], "TRC Y/vertical")
+    def test_measure_metadata_explains_2d_and_ik_angles(self) -> None:
+        sports2d = {"kind_short": "2D平面角", "kind": "Sports2D 2D 视频平面角", "kind_note": ""}
+        knee = measure_metadata("Right knee", sports2d)
+        self.assertIn("膝屈曲", knee["movement_label"])
+        self.assertIn("视频平面", knee["description"] + knee["interpretation"])
+        ik = {"kind_short": "OpenSim IK", "kind": "OpenSim IK 模型坐标", "kind_note": ""}
+        hip = measure_metadata("hip_flexion_r", ik)
+        self.assertIn("髋屈曲", hip["movement_label"])
+        self.assertIn("marker error", hip["interpretation"])
 
     def test_marker_error_quality_diagnostics(self) -> None:
         text = "\n".join(
@@ -177,6 +173,12 @@ class CoreTests(unittest.TestCase):
         }
         self.assertTrue(required.issubset(HELP_TEXTS))
         self.assertGreater(len(HELP_TEXTS), 50)
+        for text in HELP_TEXTS.values():
+            self.assertIn("用途：", text)
+            self.assertIn("默认建议：", text)
+            self.assertIn("选项说明：", text)
+            self.assertIn("何时修改：", text)
+            self.assertIn("设置不当的风险：", text)
 
 
 if __name__ == "__main__":

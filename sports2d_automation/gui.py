@@ -42,76 +42,12 @@ from .parsing import parse_float_list, parse_str_list
 from .paths import INPUTS_DIR, OUTPUTS_DIR
 from .runner import Sports2DRunner
 from .video import discover_input_jobs
+from .parameter_help import HELP_TEXTS
 
 
 PRESET_RECOMMENDED = "推荐新手模式"
 PRESET_FULL = "完整 OpenSim 模式"
 PRESET_EXPERT = "专家模式"
-
-HELP_TEXTS = {
-    "preset": "推荐新手模式优先生成稳定的 2D 角度、处理后视频、HTML 和 Excel。完整 OpenSim 模式会额外运行 IK，并默认启用标记增强。专家模式会显示全部底层参数。",
-    "height": "受试者身高，单位为米。Sports2D 用它把像素换算成米；填错会直接影响 TRC/C3D/OpenSim 尺度。",
-    "mass": "受试者体重，单位 kg。多个人时用逗号分隔。OpenSim 输出会记录该参数，但本工具不会用它做动力学计算。",
-    "persons": "要检测的人数。单人视频建议保持 1；多人视频才改为 2 或 all。",
-    "order": "多人时选择哪一个人作为 person00。单人视频保持 highest_likelihood 即可。",
-    "visible_side": "拍摄到的人体朝向。auto 会让 Sports2D 自动判断；如果结果左右或前后明显错误，手动改为 right/left/front/back。",
-    "time_range": "只分析指定时间段。用于快速测试或避开视频开头/结尾无效片段。",
-    "start": "分析开始时间，单位秒。必须小于结束时间。",
-    "end": "分析结束时间，单位秒。只勾选时间范围时生效。",
-    "slowmo": "慢动作倍率。视频本身是慢动作且需要还原真实时间时才修改；普通视频保持 1。",
-    "save_video": "保存带骨架和角度叠加的处理后视频，建议开启，便于核对 2D 检测是否稳定。",
-    "save_images": "保存逐帧图片。会产生大量文件，只有调试或论文素材需要逐帧图时再开启。",
-    "save_pose": "保存 TRC 姿态轨迹。生成报告和后续 OpenSim/Pose2Sim 检查时建议开启。",
-    "calculate_angles": "计算 Sports2D 原生 2D 关节/节段角度。推荐模式应保持开启。",
-    "save_angles": "保存 MOT 角度文件。HTML/Excel 报告需要读取这些数据。",
-    "save_graphs": "保存 Sports2D 自带图表。通常保持开启；本工具还会额外生成更完整的 HTML/Excel。",
-    "show_graphs": "运行中弹出 Sports2D 图表窗口。批处理时建议关闭，避免阻塞。",
-    "realtime": "运行中显示 Sports2D 实时窗口。批处理或远程运行时建议关闭。",
-    "pose_model": "姿态模型。body_with_feet 对运动分析更稳，whole_body 会检测更多点但更慢，也更容易受遮挡影响。",
-    "mode": "检测模式。balanced 是速度和稳定性的折中；performance 更慢但可能更准；lightweight 更快但精度较低。",
-    "det_frequency": "每 N 帧重新检测一次人体框。数值越小越稳但越慢；单人清晰视频保持 4，快速动作可改为 1。",
-    "tracking": "跟踪模式。sports2d 是默认方案；deepsort 需要额外依赖 deep_sort_realtime/torchreid。",
-    "device": "计算设备。auto 会自动选择；没有 GPU 或 GPU 环境不稳定时可改 cpu。",
-    "backend": "推理后端。auto 通常即可；只有明确知道当前环境支持 OpenVINO/ONNXRuntime/OpenCV 时才手动修改。",
-    "input_size_auto": "普通视频会自动读取真实宽高。输入宽高只影响 webcam/特殊输入，不应让普通用户手动猜。",
-    "input_width": "专家参数：webcam/特殊输入宽度。普通视频文件不会用这个值决定分析分辨率。",
-    "input_height": "专家参数：webcam/特殊输入高度。普通视频文件不会用这个值决定分析分辨率。",
-    "kpt_threshold": "关键点置信度阈值。调高会丢弃更多不确定点，调低会保留更多噪声。",
-    "avg_threshold": "整个人体平均置信度阈值。人体检测不稳定时可降低，但会增加错误轨迹风险。",
-    "kpt_number": "有效关键点数量阈值。遮挡严重时降低；清晰视频保持默认。",
-    "max_distance": "相邻帧人物匹配允许的最大像素距离。快速移动或画面大时可适当增大。",
-    "max_unseen": "人物短暂丢失后仍保留轨迹的时间。遮挡较多可增大，但多人场景可能误连。",
-    "to_meters": "把像素轨迹转换为米。需要身高或标定可靠；OpenSim/C3D 通常需要开启。",
-    "make_c3d": "生成 C3D 文件。后续软件需要 C3D 时开启。",
-    "save_calib": "保存本次尺度/地面/透视估计，便于复查。",
-    "floor_angle": "地面角。auto 会由 Sports2D 估计；若估计出很大的 horizon 或地面明显错误，建议手动标定。",
-    "xy_origin": "米制坐标原点。auto 通常即可；只有需要和外部坐标系对齐时才设置 x,y。",
-    "perspective": "透视参数。无标定时 Sports2D 用它近似深度；错误设置会影响 3D/TRC/OpenSim。",
-    "perspective_unit": "透视参数单位。没有相机标定时保持 distance_m。",
-    "calib_file": "相机/场景标定 TOML。若有可靠标定文件，优先使用它而不是 auto。",
-    "interpolate": "对短暂缺失的关键点做插值，通常建议开启。",
-    "interp_gap": "允许插值的最大缺失帧数。太大会把长时间错误轨迹强行连起来。",
-    "fill_gaps": "大缺口填充方式。last_value 保守但会出现平台段；nan 更适合后续人工处理。",
-    "sections": "保留哪些有效片段。all 保留全部；largest 可用于只保留最长连续动作。",
-    "min_chunk": "小于该帧数的短片段会被丢弃。用于去掉误检碎片。",
-    "reject_outliers": "用 Hampel 方法去除离群点，通常建议开启。",
-    "filter": "对角度/轨迹滤波，降低抖动。滤波过强会削弱快速动作峰值。",
-    "filter_type": "滤波算法。Butterworth 是常用默认；其他方法属于专家调参。",
-    "cutoff": "Butterworth 截止频率。动作越快可适当提高；过低会抹平真实峰值。",
-    "filter_order": "Butterworth 阶数。默认 4 通常够用。",
-    "do_ik": "运行 OpenSim 逆运动学。它不是 2D 骨架检测本身；单目 3D 结果必须结合 marker error 判断可信度。",
-    "augmentation": "标记增强。运行 IK 时建议开启；关闭后可能出现巨大 marker error 和扭曲 MOT。",
-    "feet_on_floor": "脚贴地修正。只适合双脚确实基本贴地的动作；跳跃、跑动、举重拉起阶段可能被它扭曲。",
-    "simple_model": "使用简化 OpenSim 模型。调试可用；正式分析优先保持关闭。",
-    "symmetry": "假设左右身体参数对称。一般保持开启，除非研究对象明确不对称且有足够标定依据。",
-    "default_height": "OpenSim/标记增强使用的默认身高。通常应与受试者身高一致。",
-    "large_angle": "大髋/膝角阈值。Sports2D 用于处理极端姿势，普通用户不要改。",
-    "trimmed": "缩放时裁掉极端值的比例。用于降低异常帧影响，普通用户保持默认。",
-    "osim_setup": "OpenSim setup 模板路径。除非你维护了自定义模板，否则保持默认。",
-    "remove_scaling": "删除单独的 scaling setup 临时文件。需要调试 OpenSim 时可关闭。",
-    "remove_ik": "删除单独的 IK setup 临时文件。需要调试 OpenSim 时可关闭。",
-}
-
 
 class RunWorker(QObject):
     log = Signal(str)
@@ -226,13 +162,13 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.preset_hint)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self._base_tab(), "基础信息")
-        self.tabs.addTab(self._output_tab(), "输出")
-        self.tabs.addTab(self._pose_tab(), "姿态检测")
-        self.tabs.addTab(self._calibration_tab(), "尺度/标定")
-        self.tabs.addTab(self._post_tab(), "后处理")
-        self.tabs.addTab(self._ik_tab(), "逆运动学")
-        self.tabs.addTab(self._toml_tab(), "TOML 预览")
+        self.base_tab_index = self.tabs.addTab(self._base_tab(), "基础信息")
+        self.output_tab_index = self.tabs.addTab(self._output_tab(), "输出")
+        self.pose_tab_index = self.tabs.addTab(self._pose_tab(), "姿态检测")
+        self.calibration_tab_index = self.tabs.addTab(self._calibration_tab(), "尺度/标定")
+        self.post_tab_index = self.tabs.addTab(self._post_tab(), "后处理")
+        self.ik_tab_index = self.tabs.addTab(self._ik_tab(), "逆运动学")
+        self.toml_tab_index = self.tabs.addTab(self._toml_tab(), "TOML 预览")
         layout.addWidget(self.tabs, stretch=1)
         self.preset_combo.setCurrentText(PRESET_RECOMMENDED)
         self.apply_preset(PRESET_RECOMMENDED)
@@ -289,8 +225,14 @@ class MainWindow(QMainWindow):
         self.save_graphs_check.setChecked(True)
         self.show_graphs_check = QCheckBox("运行时显示图表窗口")
         self.realtime_check = QCheckBox("运行时显示实时结果窗口")
+        layout.addWidget(self._checkbox_help_widget(self.save_video_check, "save_video"))
+        note = QLabel("HTML/Excel 报告所需的角度、MOT 和 TRC 输出默认由系统保持开启。逐帧图片和运行时弹窗默认隐藏在专家模式中。")
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#5f6b7a;")
+        layout.addWidget(note)
+        self.output_expert_group = QGroupBox("专家参数")
+        expert_layout = QVBoxLayout(self.output_expert_group)
         for widget in [
-            self._checkbox_help_widget(self.save_video_check, "save_video"),
             self._checkbox_help_widget(self.save_images_check, "save_images"),
             self._checkbox_help_widget(self.save_pose_check, "save_pose"),
             self._checkbox_help_widget(self.save_angles_check, "save_angles"),
@@ -299,7 +241,8 @@ class MainWindow(QMainWindow):
             self._checkbox_help_widget(self.show_graphs_check, "show_graphs"),
             self._checkbox_help_widget(self.realtime_check, "realtime"),
         ]:
-            layout.addWidget(widget)
+            expert_layout.addWidget(widget)
+        layout.addWidget(self.output_expert_group)
         layout.addStretch(1)
         self._connect_preview(tab)
         return tab
@@ -326,14 +269,14 @@ class MainWindow(QMainWindow):
         self._add_row(form, "姿态模型", self.pose_model_combo, "pose_model")
         self._add_row(form, "检测模式", self.mode_combo, "mode")
         self._add_row(form, "检测频率（每 N 帧检测一次人）", self.det_frequency_spin, "det_frequency")
-        self._add_row(form, "跟踪模式", self.tracking_combo, "tracking")
-        self._add_row(form, "计算设备", self.device_combo, "device")
-        self._add_row(form, "推理后端", self.backend_combo, "backend")
         self._add_check_row(form, self.input_size_auto_check, "input_size_auto")
         layout.addLayout(form)
 
         self.pose_expert_group = QGroupBox("专家参数")
         expert_form = QFormLayout(self.pose_expert_group)
+        self._add_row(expert_form, "跟踪模式", self.tracking_combo, "tracking")
+        self._add_row(expert_form, "计算设备", self.device_combo, "device")
+        self._add_row(expert_form, "推理后端", self.backend_combo, "backend")
         self._add_row(expert_form, "输入宽度", self.input_width_spin, "input_width")
         self._add_row(expert_form, "输入高度", self.input_height_spin, "input_height")
         self._add_row(expert_form, "关键点置信度阈值", self.kpt_threshold_spin, "kpt_threshold")
@@ -348,7 +291,8 @@ class MainWindow(QMainWindow):
 
     def _calibration_tab(self) -> QWidget:
         tab = QWidget()
-        form = QFormLayout(tab)
+        layout = QVBoxLayout(tab)
+        form = QFormLayout()
         self.to_meters_check = QCheckBox("像素转换为米")
         self.to_meters_check.setChecked(True)
         self.make_c3d_check = QCheckBox("生成 C3D")
@@ -368,11 +312,16 @@ class MainWindow(QMainWindow):
         self._add_check_row(form, self.to_meters_check, "to_meters")
         self._add_check_row(form, self.make_c3d_check, "make_c3d")
         self._add_check_row(form, self.save_calib_check, "save_calib")
-        self._add_row(form, "地面角（auto/from_calib/数值）", self.floor_angle_edit, "floor_angle")
-        self._add_row(form, "XY 原点（auto 或 x,y）", self.xy_origin_edit, "xy_origin")
-        self._add_row(form, "透视值", self.perspective_spin, "perspective")
-        self._add_row(form, "透视单位", self.perspective_unit_combo, "perspective_unit")
-        self._add_row(form, "标定文件", calib_row, "calib_file")
+        layout.addLayout(form)
+        self.calibration_expert_group = QGroupBox("专家参数")
+        expert_form = QFormLayout(self.calibration_expert_group)
+        self._add_row(expert_form, "地面角（auto/from_calib/数值）", self.floor_angle_edit, "floor_angle")
+        self._add_row(expert_form, "XY 原点（auto 或 x,y）", self.xy_origin_edit, "xy_origin")
+        self._add_row(expert_form, "透视值", self.perspective_spin, "perspective")
+        self._add_row(expert_form, "透视单位", self.perspective_unit_combo, "perspective_unit")
+        self._add_row(expert_form, "标定文件", calib_row, "calib_file")
+        layout.addWidget(self.calibration_expert_group)
+        layout.addStretch(1)
         self._connect_preview(tab)
         return tab
 
@@ -740,10 +689,18 @@ class MainWindow(QMainWindow):
         self.augmentation_check.setEnabled(expert or not self.do_ik_check.isChecked() or self.augmentation_check.isChecked())
 
     def _set_expert_visible(self, visible: bool) -> None:
-        for group_name in ["pose_expert_group", "ik_expert_group"]:
+        for group_name in [
+            "output_expert_group",
+            "pose_expert_group",
+            "calibration_expert_group",
+            "ik_expert_group",
+        ]:
             group = getattr(self, group_name, None)
             if group is not None:
                 group.setVisible(visible)
+        if hasattr(self, "tabs"):
+            self.tabs.setTabVisible(self.post_tab_index, visible)
+            self.tabs.setTabVisible(self.toml_tab_index, visible)
 
     def _add_row(
         self,
