@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import unicodedata
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -43,6 +44,17 @@ def unique_job_dir(outputs_dir: Path, input_folder: Path) -> Path:
     if base != input_folder.name:
         return outputs_dir / f"{base}_{digest}"
     return outputs_dir / base
+
+
+def create_run_dir(outputs_dir: Path, input_folder: Path, started_at: datetime | None = None) -> Path:
+    job_dir = unique_job_dir(outputs_dir, input_folder)
+    timestamp = (started_at or datetime.now()).strftime("%Y%m%d_%H%M%S_%f")
+    run_dir = job_dir / "runs" / timestamp
+    counter = 1
+    while run_dir.exists():
+        run_dir = job_dir / "runs" / f"{timestamp}_{counter:02d}"
+        counter += 1
+    return run_dir
 
 
 def is_ascii_path(path: Path) -> bool:
@@ -89,6 +101,21 @@ def rotation_from_metadata(metadata: dict) -> int:
             except ValueError:
                 return 0
     return 0
+
+
+def video_size_from_metadata(metadata: dict) -> tuple[int, int] | None:
+    streams = metadata.get("streams") or []
+    if not streams:
+        return None
+    stream = streams[0]
+    width = stream.get("width")
+    height = stream.get("height")
+    try:
+        if int(width) > 0 and int(height) > 0:
+            return int(width), int(height)
+    except (TypeError, ValueError):
+        return None
+    return None
 
 
 def prepare_videos(

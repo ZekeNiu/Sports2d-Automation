@@ -13,6 +13,9 @@ class InputJob:
 
 @dataclass
 class AnalysisSettings:
+    preset: str = "recommended"
+    input_size_auto: bool = True
+
     # Base
     nb_persons_to_detect: str = "1"
     person_ordering_method: str = "highest_likelihood"
@@ -111,9 +114,9 @@ class AnalysisSettings:
     butterworth_order: int = 4
 
     # Kinematics
-    do_ik: bool = True
+    do_ik: bool = False
     use_augmentation: bool = True
-    feet_on_floor: bool = True
+    feet_on_floor: bool = False
     use_simple_model: bool = False
     right_left_symmetry: bool = True
     default_height: float = 1.70
@@ -144,9 +147,11 @@ class PreparedVideo:
 class JobResult:
     input_job: InputJob
     output_dir: Path
+    job_output_dir: Path
     config_path: Path
     log_path: Path
     environment_path: Path
+    status_path: Path
     prepared_videos: list[PreparedVideo]
     return_code: int
     html_reports: list[Path]

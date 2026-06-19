@@ -72,7 +72,10 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--visible-side", default="auto", help="可见侧，逗号分隔。")
     parser.add_argument("--start", type=float, default=None, help="开始时间，秒。")
     parser.add_argument("--end", type=float, default=None, help="结束时间，秒。")
-    parser.add_argument("--quick", action="store_true", help="关闭 IK 和标记增强，用于快速检查。")
+    parser.add_argument("--quick", action="store_true", help="快速检查：关闭米制转换、C3D 和 IK。")
+    parser.add_argument("--ik", action="store_true", help="开启 OpenSim IK，并默认开启标记增强。")
+    parser.add_argument("--no-augmentation", action="store_true", help="专家选项：开启 IK 时仍关闭标记增强。")
+    parser.add_argument("--feet-on-floor", action="store_true", help="动作中双脚始终贴地时启用脚贴地修正。")
     parser.add_argument("--save-images", action="store_true", help="保存逐帧图片。")
     parser.add_argument("--device", default="auto", help="计算设备：auto/cpu/cuda/mps/rocm。")
     parser.add_argument("--backend", default="auto", help="推理后端：auto/openvino/onnxruntime/opencv。")
@@ -90,6 +93,11 @@ def _settings_from_args(args: argparse.Namespace) -> AnalysisSettings:
     settings.backend = args.backend
     settings.mode = args.mode
     settings.save_img = bool(args.save_images)
+    settings.do_ik = bool(args.ik)
+    settings.use_augmentation = True
+    settings.feet_on_floor = bool(args.feet_on_floor)
+    if args.no_augmentation:
+        settings.use_augmentation = False
     if args.start is not None or args.end is not None:
         if args.start is None or args.end is None:
             raise SystemExit("--start 和 --end 必须同时提供。")

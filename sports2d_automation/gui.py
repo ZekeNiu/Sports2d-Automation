@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QLayout,
     QMainWindow,
     QMessageBox,
     QPushButton,
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTabWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +42,75 @@ from .parsing import parse_float_list, parse_str_list
 from .paths import INPUTS_DIR, OUTPUTS_DIR
 from .runner import Sports2DRunner
 from .video import discover_input_jobs
+
+
+PRESET_RECOMMENDED = "推荐新手模式"
+PRESET_FULL = "完整 OpenSim 模式"
+PRESET_EXPERT = "专家模式"
+
+HELP_TEXTS = {
+    "preset": "推荐新手模式优先生成稳定的 2D 角度、处理后视频、HTML 和 Excel。完整 OpenSim 模式会额外运行 IK，并默认启用标记增强。专家模式会显示全部底层参数。",
+    "height": "受试者身高，单位为米。Sports2D 用它把像素换算成米；填错会直接影响 TRC/C3D/OpenSim 尺度。",
+    "mass": "受试者体重，单位 kg。多个人时用逗号分隔。OpenSim 输出会记录该参数，但本工具不会用它做动力学计算。",
+    "persons": "要检测的人数。单人视频建议保持 1；多人视频才改为 2 或 all。",
+    "order": "多人时选择哪一个人作为 person00。单人视频保持 highest_likelihood 即可。",
+    "visible_side": "拍摄到的人体朝向。auto 会让 Sports2D 自动判断；如果结果左右或前后明显错误，手动改为 right/left/front/back。",
+    "time_range": "只分析指定时间段。用于快速测试或避开视频开头/结尾无效片段。",
+    "start": "分析开始时间，单位秒。必须小于结束时间。",
+    "end": "分析结束时间，单位秒。只勾选时间范围时生效。",
+    "slowmo": "慢动作倍率。视频本身是慢动作且需要还原真实时间时才修改；普通视频保持 1。",
+    "save_video": "保存带骨架和角度叠加的处理后视频，建议开启，便于核对 2D 检测是否稳定。",
+    "save_images": "保存逐帧图片。会产生大量文件，只有调试或论文素材需要逐帧图时再开启。",
+    "save_pose": "保存 TRC 姿态轨迹。生成报告和后续 OpenSim/Pose2Sim 检查时建议开启。",
+    "calculate_angles": "计算 Sports2D 原生 2D 关节/节段角度。推荐模式应保持开启。",
+    "save_angles": "保存 MOT 角度文件。HTML/Excel 报告需要读取这些数据。",
+    "save_graphs": "保存 Sports2D 自带图表。通常保持开启；本工具还会额外生成更完整的 HTML/Excel。",
+    "show_graphs": "运行中弹出 Sports2D 图表窗口。批处理时建议关闭，避免阻塞。",
+    "realtime": "运行中显示 Sports2D 实时窗口。批处理或远程运行时建议关闭。",
+    "pose_model": "姿态模型。body_with_feet 对运动分析更稳，whole_body 会检测更多点但更慢，也更容易受遮挡影响。",
+    "mode": "检测模式。balanced 是速度和稳定性的折中；performance 更慢但可能更准；lightweight 更快但精度较低。",
+    "det_frequency": "每 N 帧重新检测一次人体框。数值越小越稳但越慢；单人清晰视频保持 4，快速动作可改为 1。",
+    "tracking": "跟踪模式。sports2d 是默认方案；deepsort 需要额外依赖 deep_sort_realtime/torchreid。",
+    "device": "计算设备。auto 会自动选择；没有 GPU 或 GPU 环境不稳定时可改 cpu。",
+    "backend": "推理后端。auto 通常即可；只有明确知道当前环境支持 OpenVINO/ONNXRuntime/OpenCV 时才手动修改。",
+    "input_size_auto": "普通视频会自动读取真实宽高。输入宽高只影响 webcam/特殊输入，不应让普通用户手动猜。",
+    "input_width": "专家参数：webcam/特殊输入宽度。普通视频文件不会用这个值决定分析分辨率。",
+    "input_height": "专家参数：webcam/特殊输入高度。普通视频文件不会用这个值决定分析分辨率。",
+    "kpt_threshold": "关键点置信度阈值。调高会丢弃更多不确定点，调低会保留更多噪声。",
+    "avg_threshold": "整个人体平均置信度阈值。人体检测不稳定时可降低，但会增加错误轨迹风险。",
+    "kpt_number": "有效关键点数量阈值。遮挡严重时降低；清晰视频保持默认。",
+    "max_distance": "相邻帧人物匹配允许的最大像素距离。快速移动或画面大时可适当增大。",
+    "max_unseen": "人物短暂丢失后仍保留轨迹的时间。遮挡较多可增大，但多人场景可能误连。",
+    "to_meters": "把像素轨迹转换为米。需要身高或标定可靠；OpenSim/C3D 通常需要开启。",
+    "make_c3d": "生成 C3D 文件。后续软件需要 C3D 时开启。",
+    "save_calib": "保存本次尺度/地面/透视估计，便于复查。",
+    "floor_angle": "地面角。auto 会由 Sports2D 估计；若估计出很大的 horizon 或地面明显错误，建议手动标定。",
+    "xy_origin": "米制坐标原点。auto 通常即可；只有需要和外部坐标系对齐时才设置 x,y。",
+    "perspective": "透视参数。无标定时 Sports2D 用它近似深度；错误设置会影响 3D/TRC/OpenSim。",
+    "perspective_unit": "透视参数单位。没有相机标定时保持 distance_m。",
+    "calib_file": "相机/场景标定 TOML。若有可靠标定文件，优先使用它而不是 auto。",
+    "interpolate": "对短暂缺失的关键点做插值，通常建议开启。",
+    "interp_gap": "允许插值的最大缺失帧数。太大会把长时间错误轨迹强行连起来。",
+    "fill_gaps": "大缺口填充方式。last_value 保守但会出现平台段；nan 更适合后续人工处理。",
+    "sections": "保留哪些有效片段。all 保留全部；largest 可用于只保留最长连续动作。",
+    "min_chunk": "小于该帧数的短片段会被丢弃。用于去掉误检碎片。",
+    "reject_outliers": "用 Hampel 方法去除离群点，通常建议开启。",
+    "filter": "对角度/轨迹滤波，降低抖动。滤波过强会削弱快速动作峰值。",
+    "filter_type": "滤波算法。Butterworth 是常用默认；其他方法属于专家调参。",
+    "cutoff": "Butterworth 截止频率。动作越快可适当提高；过低会抹平真实峰值。",
+    "filter_order": "Butterworth 阶数。默认 4 通常够用。",
+    "do_ik": "运行 OpenSim 逆运动学。它不是 2D 骨架检测本身；单目 3D 结果必须结合 marker error 判断可信度。",
+    "augmentation": "标记增强。运行 IK 时建议开启；关闭后可能出现巨大 marker error 和扭曲 MOT。",
+    "feet_on_floor": "脚贴地修正。只适合双脚确实基本贴地的动作；跳跃、跑动、举重拉起阶段可能被它扭曲。",
+    "simple_model": "使用简化 OpenSim 模型。调试可用；正式分析优先保持关闭。",
+    "symmetry": "假设左右身体参数对称。一般保持开启，除非研究对象明确不对称且有足够标定依据。",
+    "default_height": "OpenSim/标记增强使用的默认身高。通常应与受试者身高一致。",
+    "large_angle": "大髋/膝角阈值。Sports2D 用于处理极端姿势，普通用户不要改。",
+    "trimmed": "缩放时裁掉极端值的比例。用于降低异常帧影响，普通用户保持默认。",
+    "osim_setup": "OpenSim setup 模板路径。除非你维护了自定义模板，否则保持默认。",
+    "remove_scaling": "删除单独的 scaling setup 临时文件。需要调试 OpenSim 时可关闭。",
+    "remove_ik": "删除单独的 IK setup 临时文件。需要调试 OpenSim 时可关闭。",
+}
 
 
 class RunWorker(QObject):
@@ -137,6 +208,23 @@ class MainWindow(QMainWindow):
         return panel
 
     def _build_settings_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        preset_row = QHBoxLayout()
+        preset_row.addWidget(QLabel("分析预设"))
+        self.preset_combo = _combo([PRESET_RECOMMENDED, PRESET_FULL, PRESET_EXPERT])
+        self.preset_combo.currentTextChanged.connect(self.apply_preset)
+        preset_row.addWidget(self.preset_combo)
+        preset_row.addWidget(self._help_button("preset"))
+        preset_row.addStretch(1)
+        layout.addLayout(preset_row)
+        self.preset_hint = QLabel(
+            "推荐新手模式默认不运行 OpenSim IK；先确认 2D 骨架和角度稳定，再切换完整 OpenSim 模式。"
+        )
+        self.preset_hint.setWordWrap(True)
+        self.preset_hint.setStyleSheet("color:#5f6b7a;")
+        layout.addWidget(self.preset_hint)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(self._base_tab(), "基础信息")
         self.tabs.addTab(self._output_tab(), "输出")
@@ -145,7 +233,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._post_tab(), "后处理")
         self.tabs.addTab(self._ik_tab(), "逆运动学")
         self.tabs.addTab(self._toml_tab(), "TOML 预览")
-        return self.tabs
+        layout.addWidget(self.tabs, stretch=1)
+        self.preset_combo.setCurrentText(PRESET_RECOMMENDED)
+        self.apply_preset(PRESET_RECOMMENDED)
+        return panel
 
     def _base_tab(self) -> QWidget:
         tab = QWidget()
@@ -170,15 +261,15 @@ class MainWindow(QMainWindow):
         self.start_spin = _double_spin(0, 99999, 0, 0.1, " s")
         self.end_spin = _double_spin(0, 99999, 1, 0.1, " s")
         self.slowmo_spin = _double_spin(0.01, 100, 1.0, 0.1, " x")
-        form.addRow("身高", self.height_spin)
-        form.addRow("体重 kg（多人用逗号分隔）", self.mass_edit)
-        form.addRow("检测人数", self.persons_combo)
-        form.addRow("人物排序方式", self.order_combo)
-        form.addRow("可见侧（auto/right/left/front/back/none）", self.visible_side_edit)
-        form.addRow("", self.time_range_check)
-        form.addRow("开始时间", self.start_spin)
-        form.addRow("结束时间", self.end_spin)
-        form.addRow("慢动作倍率", self.slowmo_spin)
+        self._add_row(form, "身高", self.height_spin, "height")
+        self._add_row(form, "体重 kg（多人用逗号分隔）", self.mass_edit, "mass")
+        self._add_row(form, "检测人数", self.persons_combo, "persons")
+        self._add_row(form, "人物排序方式", self.order_combo, "order")
+        self._add_row(form, "可见侧（auto/right/left/front/back/none）", self.visible_side_edit, "visible_side")
+        self._add_check_row(form, self.time_range_check, "time_range")
+        self._add_row(form, "开始时间", self.start_spin, "start")
+        self._add_row(form, "结束时间", self.end_spin, "end")
+        self._add_row(form, "慢动作倍率", self.slowmo_spin, "slowmo")
         self._connect_preview(tab)
         return tab
 
@@ -199,14 +290,14 @@ class MainWindow(QMainWindow):
         self.show_graphs_check = QCheckBox("运行时显示图表窗口")
         self.realtime_check = QCheckBox("运行时显示实时结果窗口")
         for widget in [
-            self.save_video_check,
-            self.save_images_check,
-            self.save_pose_check,
-            self.save_angles_check,
-            self.calculate_angles_check,
-            self.save_graphs_check,
-            self.show_graphs_check,
-            self.realtime_check,
+            self._checkbox_help_widget(self.save_video_check, "save_video"),
+            self._checkbox_help_widget(self.save_images_check, "save_images"),
+            self._checkbox_help_widget(self.save_pose_check, "save_pose"),
+            self._checkbox_help_widget(self.save_angles_check, "save_angles"),
+            self._checkbox_help_widget(self.calculate_angles_check, "calculate_angles"),
+            self._checkbox_help_widget(self.save_graphs_check, "save_graphs"),
+            self._checkbox_help_widget(self.show_graphs_check, "show_graphs"),
+            self._checkbox_help_widget(self.realtime_check, "realtime"),
         ]:
             layout.addWidget(widget)
         layout.addStretch(1)
@@ -215,13 +306,16 @@ class MainWindow(QMainWindow):
 
     def _pose_tab(self) -> QWidget:
         tab = QWidget()
-        form = QFormLayout(tab)
+        layout = QVBoxLayout(tab)
+        form = QFormLayout()
         self.pose_model_combo = _combo(["body_with_feet", "whole_body_wrist", "whole_body", "body"])
         self.mode_combo = _combo(["balanced", "lightweight", "performance"], editable=True)
         self.det_frequency_spin = _int_spin(1, 500, 4)
         self.tracking_combo = _combo(["sports2d", "deepsort"])
         self.device_combo = _combo(["auto", "cpu", "cuda", "mps", "rocm"])
         self.backend_combo = _combo(["auto", "openvino", "onnxruntime", "opencv"])
+        self.input_size_auto_check = QCheckBox("自动读取普通视频宽高")
+        self.input_size_auto_check.setChecked(True)
         self.input_width_spin = _int_spin(128, 4096, 1280)
         self.input_height_spin = _int_spin(128, 4096, 720)
         self.kpt_threshold_spin = _double_spin(0, 1, 0.3, 0.05)
@@ -229,19 +323,26 @@ class MainWindow(QMainWindow):
         self.kpt_number_spin = _double_spin(0, 1, 0.3, 0.05)
         self.max_distance_spin = _int_spin(0, 5000, 250)
         self.max_unseen_spin = _double_spin(0, 60, 1.0, 0.1, " s")
-        form.addRow("姿态模型", self.pose_model_combo)
-        form.addRow("检测模式", self.mode_combo)
-        form.addRow("检测频率（每 N 帧检测一次人）", self.det_frequency_spin)
-        form.addRow("跟踪模式", self.tracking_combo)
-        form.addRow("计算设备", self.device_combo)
-        form.addRow("推理后端", self.backend_combo)
-        form.addRow("输入宽度", self.input_width_spin)
-        form.addRow("输入高度", self.input_height_spin)
-        form.addRow("关键点置信度阈值", self.kpt_threshold_spin)
-        form.addRow("平均置信度阈值", self.avg_threshold_spin)
-        form.addRow("关键点数量阈值", self.kpt_number_spin)
-        form.addRow("最大跳变距离 px", self.max_distance_spin)
-        form.addRow("最大丢失时间", self.max_unseen_spin)
+        self._add_row(form, "姿态模型", self.pose_model_combo, "pose_model")
+        self._add_row(form, "检测模式", self.mode_combo, "mode")
+        self._add_row(form, "检测频率（每 N 帧检测一次人）", self.det_frequency_spin, "det_frequency")
+        self._add_row(form, "跟踪模式", self.tracking_combo, "tracking")
+        self._add_row(form, "计算设备", self.device_combo, "device")
+        self._add_row(form, "推理后端", self.backend_combo, "backend")
+        self._add_check_row(form, self.input_size_auto_check, "input_size_auto")
+        layout.addLayout(form)
+
+        self.pose_expert_group = QGroupBox("专家参数")
+        expert_form = QFormLayout(self.pose_expert_group)
+        self._add_row(expert_form, "输入宽度", self.input_width_spin, "input_width")
+        self._add_row(expert_form, "输入高度", self.input_height_spin, "input_height")
+        self._add_row(expert_form, "关键点置信度阈值", self.kpt_threshold_spin, "kpt_threshold")
+        self._add_row(expert_form, "平均置信度阈值", self.avg_threshold_spin, "avg_threshold")
+        self._add_row(expert_form, "关键点数量阈值", self.kpt_number_spin, "kpt_number")
+        self._add_row(expert_form, "最大跳变距离 px", self.max_distance_spin, "max_distance")
+        self._add_row(expert_form, "最大丢失时间", self.max_unseen_spin, "max_unseen")
+        layout.addWidget(self.pose_expert_group)
+        layout.addStretch(1)
         self._connect_preview(tab)
         return tab
 
@@ -264,14 +365,14 @@ class MainWindow(QMainWindow):
         browse = QPushButton("浏览")
         browse.clicked.connect(self._browse_calib)
         calib_row.addWidget(browse)
-        form.addRow("", self.to_meters_check)
-        form.addRow("", self.make_c3d_check)
-        form.addRow("", self.save_calib_check)
-        form.addRow("地面角（auto/from_calib/数值）", self.floor_angle_edit)
-        form.addRow("XY 原点（auto 或 x,y）", self.xy_origin_edit)
-        form.addRow("透视值", self.perspective_spin)
-        form.addRow("透视单位", self.perspective_unit_combo)
-        form.addRow("标定文件", calib_row)
+        self._add_check_row(form, self.to_meters_check, "to_meters")
+        self._add_check_row(form, self.make_c3d_check, "make_c3d")
+        self._add_check_row(form, self.save_calib_check, "save_calib")
+        self._add_row(form, "地面角（auto/from_calib/数值）", self.floor_angle_edit, "floor_angle")
+        self._add_row(form, "XY 原点（auto 或 x,y）", self.xy_origin_edit, "xy_origin")
+        self._add_row(form, "透视值", self.perspective_spin, "perspective")
+        self._add_row(form, "透视单位", self.perspective_unit_combo, "perspective_unit")
+        self._add_row(form, "标定文件", calib_row, "calib_file")
         self._connect_preview(tab)
         return tab
 
@@ -291,28 +392,29 @@ class MainWindow(QMainWindow):
         self.filter_type_combo = _combo(["butterworth", "kalman", "gcv_spline", "gaussian", "median", "loess"])
         self.cutoff_spin = _double_spin(0.1, 1000, 6.0, 0.5, " Hz")
         self.filter_order_spin = _int_spin(1, 12, 4)
-        form.addRow("", self.interpolate_check)
-        form.addRow("最大插值间隙（帧）", self.interp_gap_spin)
-        form.addRow("大间隙填充方式", self.fill_gaps_combo)
-        form.addRow("保留片段", self.sections_combo)
-        form.addRow("最小有效片段帧数", self.min_chunk_spin)
-        form.addRow("", self.reject_outliers_check)
-        form.addRow("", self.filter_check)
-        form.addRow("滤波类型", self.filter_type_combo)
-        form.addRow("Butterworth 截止频率", self.cutoff_spin)
-        form.addRow("Butterworth 阶数", self.filter_order_spin)
+        self._add_check_row(form, self.interpolate_check, "interpolate")
+        self._add_row(form, "最大插值间隙（帧）", self.interp_gap_spin, "interp_gap")
+        self._add_row(form, "大间隙填充方式", self.fill_gaps_combo, "fill_gaps")
+        self._add_row(form, "保留片段", self.sections_combo, "sections")
+        self._add_row(form, "最小有效片段帧数", self.min_chunk_spin, "min_chunk")
+        self._add_check_row(form, self.reject_outliers_check, "reject_outliers")
+        self._add_check_row(form, self.filter_check, "filter")
+        self._add_row(form, "滤波类型", self.filter_type_combo, "filter_type")
+        self._add_row(form, "Butterworth 截止频率", self.cutoff_spin, "cutoff")
+        self._add_row(form, "Butterworth 阶数", self.filter_order_spin, "filter_order")
         self._connect_preview(tab)
         return tab
 
     def _ik_tab(self) -> QWidget:
         tab = QWidget()
-        form = QFormLayout(tab)
+        layout = QVBoxLayout(tab)
+        form = QFormLayout()
         self.do_ik_check = QCheckBox("运行 OpenSim 逆运动学")
-        self.do_ik_check.setChecked(True)
+        self.do_ik_check.setChecked(False)
         self.augmentation_check = QCheckBox("运行标记增强")
         self.augmentation_check.setChecked(True)
-        self.feet_on_floor_check = QCheckBox("脚贴地修正")
-        self.feet_on_floor_check.setChecked(True)
+        self.feet_on_floor_check = QCheckBox("动作中双脚始终贴地时启用修正")
+        self.feet_on_floor_check.setChecked(False)
         self.simple_model_check = QCheckBox("使用简单 OpenSim 模型")
         self.symmetry_check = QCheckBox("左右对称")
         self.symmetry_check.setChecked(True)
@@ -324,17 +426,25 @@ class MainWindow(QMainWindow):
         self.remove_scaling_check.setChecked(True)
         self.remove_ik_check = QCheckBox("删除单个 IK setup 临时文件")
         self.remove_ik_check.setChecked(True)
-        form.addRow("", self.do_ik_check)
-        form.addRow("", self.augmentation_check)
-        form.addRow("", self.feet_on_floor_check)
-        form.addRow("", self.simple_model_check)
-        form.addRow("", self.symmetry_check)
-        form.addRow("默认身高", self.default_height_spin)
-        form.addRow("大髋/膝角阈值", self.large_angle_spin)
-        form.addRow("极值裁剪比例", self.trimmed_spin)
-        form.addRow("OpenSim setup 路径", self.osim_setup_edit)
-        form.addRow("", self.remove_scaling_check)
-        form.addRow("", self.remove_ik_check)
+        self._add_check_row(form, self.do_ik_check, "do_ik")
+        self._add_check_row(form, self.augmentation_check, "augmentation")
+        self._add_check_row(form, self.feet_on_floor_check, "feet_on_floor")
+        self._add_check_row(form, self.simple_model_check, "simple_model")
+        self._add_check_row(form, self.symmetry_check, "symmetry")
+        self._add_row(form, "默认身高", self.default_height_spin, "default_height")
+        layout.addLayout(form)
+
+        self.ik_expert_group = QGroupBox("专家参数")
+        expert_form = QFormLayout(self.ik_expert_group)
+        self._add_row(expert_form, "大髋/膝角阈值", self.large_angle_spin, "large_angle")
+        self._add_row(expert_form, "极值裁剪比例", self.trimmed_spin, "trimmed")
+        self._add_row(expert_form, "OpenSim setup 路径", self.osim_setup_edit, "osim_setup")
+        self._add_check_row(expert_form, self.remove_scaling_check, "remove_scaling")
+        self._add_check_row(expert_form, self.remove_ik_check, "remove_ik")
+        layout.addWidget(self.ik_expert_group)
+        layout.addStretch(1)
+        self.do_ik_check.stateChanged.connect(self._sync_ik_safety)
+        self.augmentation_check.stateChanged.connect(self._sync_ik_safety)
         self._connect_preview(tab)
         return tab
 
@@ -347,6 +457,10 @@ class MainWindow(QMainWindow):
         row.addWidget(refresh)
         row.addStretch(1)
         layout.addLayout(row)
+        note = QLabel("说明：普通视频运行时会自动读取真实宽高；预览中的 input_size 仅是 webcam/占位值。")
+        note.setWordWrap(True)
+        note.setStyleSheet("color:#5f6b7a;")
+        layout.addWidget(note)
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
         layout.addWidget(self.preview_text)
@@ -499,6 +613,7 @@ class MainWindow(QMainWindow):
 
     def collect_settings(self) -> AnalysisSettings:
         settings = AnalysisSettings()
+        settings.preset = self.preset_combo.currentText()
         settings.first_person_height = self.height_spin.value()
         settings.default_height = self.default_height_spin.value()
         settings.participant_mass = parse_float_list(self.mass_edit.text(), [70.0])
@@ -523,6 +638,7 @@ class MainWindow(QMainWindow):
         settings.backend = self.backend_combo.currentText()
         settings.device = self.device_combo.currentText()
         settings.tracking_mode = self.tracking_combo.currentText()
+        settings.input_size_auto = self.input_size_auto_check.isChecked()
         settings.input_width = self.input_width_spin.value()
         settings.input_height = self.input_height_spin.value()
         settings.keypoint_likelihood_threshold = self.kpt_threshold_spin.value()
@@ -555,6 +671,9 @@ class MainWindow(QMainWindow):
         settings.butterworth_order = self.filter_order_spin.value()
         settings.do_ik = self.do_ik_check.isChecked()
         settings.use_augmentation = self.augmentation_check.isChecked()
+        if settings.do_ik and not settings.use_augmentation and settings.preset != PRESET_EXPERT:
+            settings.use_augmentation = True
+            self.augmentation_check.setChecked(True)
         settings.feet_on_floor = self.feet_on_floor_check.isChecked()
         settings.use_simple_model = self.simple_model_check.isChecked()
         settings.right_left_symmetry = self.symmetry_check.isChecked()
@@ -574,6 +693,101 @@ class MainWindow(QMainWindow):
     def _set_all_jobs(self, state: Qt.CheckState) -> None:
         for row in range(self.job_list.count()):
             self.job_list.item(row).setCheckState(state)
+
+    @Slot(str)
+    def apply_preset(self, preset: str) -> None:
+        if not hasattr(self, "do_ik_check"):
+            return
+        expert = preset == PRESET_EXPERT
+        self._set_expert_visible(expert)
+        if preset == PRESET_RECOMMENDED:
+            self.preset_hint.setText(
+                "推荐新手模式：生成 2D 角度、处理后视频、TRC/MOT、HTML 和 Excel；不默认运行 OpenSim IK。"
+            )
+            self.do_ik_check.setChecked(False)
+            self.augmentation_check.setChecked(True)
+            self.feet_on_floor_check.setChecked(False)
+            self.pose_model_combo.setCurrentText("body_with_feet")
+            self.mode_combo.setCurrentText("balanced")
+            self.det_frequency_spin.setValue(4)
+            self.input_size_auto_check.setChecked(True)
+        elif preset == PRESET_FULL:
+            self.preset_hint.setText(
+                "完整 OpenSim 模式：在推荐输出基础上运行 IK，并强制默认启用标记增强；仍建议先检查质量诊断。"
+            )
+            self.do_ik_check.setChecked(True)
+            self.augmentation_check.setChecked(True)
+            self.feet_on_floor_check.setChecked(False)
+            self.pose_model_combo.setCurrentText("body_with_feet")
+            self.mode_combo.setCurrentText("balanced")
+            self.det_frequency_spin.setValue(4)
+            self.input_size_auto_check.setChecked(True)
+        else:
+            self.preset_hint.setText(
+                "专家模式：显示所有底层参数，并允许关闭标记增强；报告会对高风险组合做醒目标记。"
+            )
+        self._sync_ik_safety()
+        self.refresh_preview()
+
+    def _sync_ik_safety(self, *_args: object) -> None:
+        if not hasattr(self, "augmentation_check"):
+            return
+        expert = self.preset_combo.currentText() == PRESET_EXPERT if hasattr(self, "preset_combo") else False
+        if self.do_ik_check.isChecked() and not self.augmentation_check.isChecked() and not expert:
+            self.augmentation_check.blockSignals(True)
+            self.augmentation_check.setChecked(True)
+            self.augmentation_check.blockSignals(False)
+        self.augmentation_check.setEnabled(expert or not self.do_ik_check.isChecked() or self.augmentation_check.isChecked())
+
+    def _set_expert_visible(self, visible: bool) -> None:
+        for group_name in ["pose_expert_group", "ik_expert_group"]:
+            group = getattr(self, group_name, None)
+            if group is not None:
+                group.setVisible(visible)
+
+    def _add_row(
+        self,
+        form: QFormLayout,
+        label: str,
+        field: QWidget | QLayout,
+        help_key: str,
+    ) -> None:
+        form.addRow(label, self._field_with_help(field, help_key))
+
+    def _add_check_row(self, form: QFormLayout, checkbox: QCheckBox, help_key: str) -> None:
+        form.addRow("", self._checkbox_help_widget(checkbox, help_key))
+
+    def _field_with_help(self, field: QWidget | QLayout, help_key: str) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        if isinstance(field, QLayout):
+            layout.addLayout(field)
+        else:
+            layout.addWidget(field)
+        layout.addWidget(self._help_button(help_key))
+        return container
+
+    def _checkbox_help_widget(self, checkbox: QCheckBox, help_key: str) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(checkbox)
+        layout.addStretch(1)
+        layout.addWidget(self._help_button(help_key))
+        return container
+
+    def _help_button(self, help_key: str) -> QToolButton:
+        text = HELP_TEXTS[help_key]
+        button = QToolButton()
+        button.setText("?")
+        button.setToolTip(text)
+        button.setFixedWidth(24)
+        button.clicked.connect(lambda _checked=False, key=help_key: self._show_help(key))
+        return button
+
+    def _show_help(self, help_key: str) -> None:
+        QMessageBox.information(self, "参数说明", HELP_TEXTS[help_key])
 
     def _connect_preview(self, widget: QWidget) -> None:
         children = []

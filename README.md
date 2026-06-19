@@ -1,63 +1,75 @@
 # Sports2D 自动化中文桌面工具
 
-这个项目为 Sports2D 提供一个中文桌面图形界面和批处理流水线。它会从 `Inputs` 子文件夹读取视频，把 Sports2D 原生结果、日志、HTML 交互报告和 Excel 汇总报告写入 `Outputs` 下对应的 ASCII 作业目录。
-
-## 环境
-
-默认复用以下 Conda 环境：
+这个项目为 Sports2D 提供中文桌面 GUI、批处理流水线、HTML 交互报告和 Excel 汇总报告。默认环境为：
 
 ```text
 D:\Application\Anaconda\envs\sports3d
 ```
 
-当前实现会使用该环境里的 `sports2d.exe`、PySide6、Plotly、pandas、openpyxl、OpenSim、Pose2Sim，以及系统 PATH 中的 `ffmpeg/ffprobe`。
+双击 `run_gui.bat` 启动；也可以运行：
 
-## 使用方式
+```powershell
+D:\Application\Anaconda\envs\sports3d\python.exe -m sports2d_automation.gui
+```
 
-1. 在 `Inputs` 下为每次分析新建一个文件夹，并把视频放进去。
+## 基本流程
 
-   ```text
-   Inputs/
-     20260620_Squat/
-       squat_side.mp4
-   ```
-
-2. 双击运行：
-
-   ```text
-   run_gui.bat
-   ```
-
-3. 在左侧勾选要分析的输入作业。
-4. 在右侧标签页填写参数。默认模式会开启标记增强和 OpenSim 逆运动学；如果只想快速检查，可手动关闭。
+1. 在 `Inputs` 下为每个分析任务新建一个文件夹，把视频放进去。
+2. 启动 GUI，左侧勾选一个或多个输入作业。
+3. 选择分析预设：
+   - `推荐新手模式`：默认模式，生成 2D 角度、处理后视频、TRC/MOT、HTML 和 Excel，不默认运行 OpenSim IK。
+   - `完整 OpenSim 模式`：在推荐输出基础上运行 IK，并默认启用标记增强。
+   - `专家模式`：显示底层参数，允许关闭标记增强等高风险组合。
+4. 填写身高、体重、可见侧、时间范围等必要信息。
 5. 点击“运行所选分析”。
-6. 在 `Outputs\<ASCII作业名>` 查看结果。
 
-## GUI 参数说明
+## 重要原则
 
-- 基础信息：身高、体重、检测人数、可见侧、时间范围、慢动作倍率。
-- 输出：处理后视频、逐帧图片、TRC、MOT、C3D、Sports2D 原生图表。
-- 姿态检测：姿态模型、检测模式、跟踪模式、计算设备、推理后端、置信度阈值。
-- 尺度/标定：像素到米、地面角、XY 原点、透视参数、标定文件。
-- 后处理：插值、离群值处理、滤波方式和 Butterworth 参数。
-- 逆运动学：IK、标记增强、脚贴地修正、简单模型、OpenSim setup 路径。
-- TOML 预览：实时查看即将传给 Sports2D 的配置。
+- 处理后视频骨架稳定，说明 2D pose 检测稳定；它不能单独证明 OpenSim IK 或 3D MOT 动作准确。
+- Sports2D 原生角度是 2D 视频平面角，不是完整 3D 屈曲、外展、旋转角。
+- OpenSim `*_ik.mot` 是模型坐标输出，必须结合 HTML/Excel 中的 marker error、相机方向、地面角和拍摄条件判断可信度。
+- 普通视频的宽高会自动读取；GUI 不要求新手手动填写输入宽度/高度。那些参数只保留在专家模式中，用于 webcam 或特殊输入。
+- 运行 IK 时建议启用标记增强。关闭标记增强可能产生非常大的 marker error 和严重扭曲的 MOT/OpenSim 动作。
+- `脚贴地修正` 只适合双脚基本始终贴地的动作；举重、跑跳或脚跟明显离地时不要默认开启。
 
-## 输出内容
+## 输出结构
 
-每个作业目录包含：
+每次运行都会创建独立目录，避免旧结果和新日志混在一起：
 
-- `run_config.toml`：本次 Sports2D 配置。
-- `run.log`：自动化子进程日志。
-- `environment_report.json`：环境检查结果。
-- `video_metadata.json`：原始视频和临时分析视频的元数据。
-- `<video>_Sports2D/`：Sports2D 原生输出，包括 TRC、MOT、处理后视频、图表等。
-- `<video>_Sports2D/reports/*_interactive.html`：离线交互式 HTML 报告。
-- `analysis_report.xlsx`：Excel 数据与统计汇总。
+```text
+Outputs/
+  <ASCII作业名>/
+    latest_run.json
+    runs/
+      20260620_153012_123456/
+        run_config.toml
+        run_status.json
+        run.log
+        environment_report.json
+        video_metadata.json
+        _work/
+        <video>_Sports2D/
+        analysis_report.xlsx
+```
+
+`run_status.json` 会记录 `running / success / failed / canceled`。取消或失败的运行不会展示旧报告作为本次结果。
+
+## 报告内容
+
+- HTML 交互报告：
+  - 视频和角度曲线同步。
+  - 鼠标悬停显示当前时刻各角度/坐标值。
+  - 明确区分 `Sports2D 2D 视频平面角` 与 `OpenSim IK 模型坐标`。
+  - 三维标记视图已把 TRC/OpenSim 的 `Y` 轴映射为浏览器中的竖直轴。
+  - 显示 OpenSim marker error、相机 horizon、可见侧等质量诊断。
+- Excel 报告：
+  - 原始角度/坐标数据。
+  - 最小值、最大值、均值、标准差、ROM 和峰值时间。
+  - 参数、环境、视频元数据、质量诊断、输出文件索引。
 
 ## 视频方向处理
 
-工具会先用 `ffprobe` 检查视频方向元数据。若发现 `rotation`，会用 `ffmpeg` 生成已物理旋转且清除旋转元数据的临时 MP4，再交给 Sports2D 分析。这用于避免竖屏视频在 OpenCV/Sports2D/OpenSim 链路中被错误当作横屏处理。
+工具会先用 `ffprobe` 检查视频旋转元数据。若发现 `rotation`，会用 `ffmpeg` 生成已物理旋转且清除旋转元数据的临时 MP4，再交给 Sports2D。这样可以避免竖屏视频在 OpenCV/Sports2D/OpenSim 链路中被当作横屏处理。
 
 ## 命令行
 
@@ -67,7 +79,19 @@ D:\Application\Anaconda\envs\sports3d
 D:\Application\Anaconda\envs\sports3d\python.exe -m sports2d_automation.cli list
 ```
 
-快速跑一个作业，不启用 IK 和标记增强：
+运行推荐模式：
+
+```powershell
+D:\Application\Anaconda\envs\sports3d\python.exe -m sports2d_automation.cli run --job OfficialDemo
+```
+
+运行完整 OpenSim 模式：
+
+```powershell
+D:\Application\Anaconda\envs\sports3d\python.exe -m sports2d_automation.cli run --job OfficialDemo --ik
+```
+
+快速短片段检查：
 
 ```powershell
 D:\Application\Anaconda\envs\sports3d\python.exe -m sports2d_automation.cli run --job OfficialDemo --quick --start 0 --end 1
@@ -79,9 +103,18 @@ D:\Application\Anaconda\envs\sports3d\python.exe -m sports2d_automation.cli run 
 D:\Application\Anaconda\envs\sports3d\python.exe -m sports2d_automation.cli check-env
 ```
 
-## 注意
+## 环境与更新
 
-- 默认不提交 `Inputs` 和 `Outputs` 中的真实数据到 GitHub。
-- DeepSort 选项保留，但当前环境如果缺少 `deep_sort_realtime` 和 `torchreid`，GUI 会提示需要额外安装依赖。
-- “一键更新”只更新 `sports2d` 和 `pose2sim`，不会自动升级 OpenSim。
-- Sports2D 的 2D 结果质量高度依赖拍摄角度、遮挡情况和姿态估计质量；重要结果仍建议在 OpenSim 中复核。
+GUI 中的“检查环境”会检查 Sports2D、Pose2Sim、OpenSim、PySide6、Plotly、OpenPyXL、ffmpeg、ffprobe、ONNXRuntime providers 和 DeepSort 依赖。
+
+“一键更新 Sports2D/Pose2Sim”只运行：
+
+```powershell
+python -m pip install -U sports2d pose2sim
+```
+
+它不会自动升级 OpenSim。
+
+## Git 注意
+
+真实视频和分析输出默认不提交到 GitHub。仓库只保留代码、脚本、说明和 `Inputs` / `Outputs` 的占位文件。
