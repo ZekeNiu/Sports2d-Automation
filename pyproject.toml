@@ -1,0 +1,8 @@
+[project]
+name = "sports2d-automation"
+version = "0.1.0"
+description = "Chinese desktop automation wrapper for Sports2D workflows"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

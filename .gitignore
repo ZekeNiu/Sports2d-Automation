@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local runtime data
+Inputs/**
+Outputs/**
+!Inputs/
+!Outputs/
+!Inputs/.gitkeep
+!Outputs/.gitkeep
+!Inputs/README.md
+!Outputs/README.md
+
+# Generated reports and work files outside Outputs, if any
+*.log
+*.tmp
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
