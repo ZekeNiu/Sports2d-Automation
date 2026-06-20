@@ -887,6 +887,7 @@ def _sports2d_measure_metadata(name: str, display: str, lower: str, camera_note:
 def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: str) -> dict[str, str]:
     side, side_rank = _side_metadata(lower)
     source = "OpenSim IK"
+    recognized_primary = False
     is_angle = True
     is_auxiliary = False
     unit = "deg"
@@ -906,6 +907,7 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
         label = f"骨盆{axis}平移（辅助数据，非关节活动度）"
         desc = "该列是 OpenSim 骨盆平移坐标，单位通常为米，用于描述模型整体位置变化。它不是关节角，也不是关节活动度。"
     elif lower in {"pelvis_tilt", "pelvis_list", "pelvis_rotation"}:
+        recognized_primary = True
         rank = BODY_RANKS["pelvis"]
         mapping = {
             "pelvis_tilt": ("骨盆前倾/后倾角", 0),
@@ -915,21 +917,25 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
         label, motion_rank = mapping[lower]
         desc = f"该列是 OpenSim IK 估计的{label}时间序列，反映骨盆相对 OpenSim 参考坐标系的旋转姿态。"
     elif "hip_flexion" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["hip"]
         motion_rank = 0
         label = f"{side}髋关节屈曲/伸展角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}髋关节屈曲/伸展角时间序列。ROM 表示当前片段内该角度的最大值减最小值。"
     elif "hip_adduction" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["hip"]
         motion_rank = 1
         label = f"{side}髋关节内收/外展角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}髋关节额状面内收/外展角时间序列。"
     elif "hip_rotation" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["hip"]
         motion_rank = 2
         label = f"{side}髋关节内旋/外旋角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}髋关节轴向旋转角时间序列。"
     elif re.search(r"knee_angle_[rl]$", lower):
+        recognized_primary = True
         rank = BODY_RANKS["knee"]
         motion_rank = 0
         label = f"{side}膝关节屈曲/伸展角（OpenSim IK）"
@@ -941,21 +947,25 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
         label = f"{side}膝关节辅助约束角（非核心活动度）"
         desc = "该列是 OpenSim 膝关节模型的辅助约束坐标，不作为用户报告中的核心膝关节活动度指标。"
     elif "ankle_angle" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["ankle"]
         motion_rank = 0
         label = f"{side}踝关节背屈/跖屈角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}踝关节背屈/跖屈角时间序列。"
     elif "subtalar_angle" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["subtalar"]
         motion_rank = 1
         label = f"{side}距下关节内翻/外翻角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}距下关节内翻/外翻角时间序列。"
     elif "mtp_angle" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["mtp"]
         motion_rank = 0
         label = f"{side}跖趾关节屈曲/伸展角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}跖趾关节屈曲/伸展角时间序列。"
     elif any(token in lower for token in ["flex_ext", "lat_bending", "axial_rotation"]):
+        recognized_primary = True
         rank = BODY_RANKS["spine"]
         segment = name.rsplit("_", 2)[0].replace("_", "-")
         if "flex_ext" in lower:
@@ -983,51 +993,61 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
         label = "躯干/腹部模型辅助旋转角（非核心活动度）"
         desc = "该列是 OpenSim 模型的辅助旋转坐标，通常用于模型求解，不作为核心关节活动度指标展示。"
     elif lower == "neck_flexion":
+        recognized_primary = True
         rank = BODY_RANKS["neck"]
         motion_rank = 0
         label = "颈部屈曲/伸展角（OpenSim IK）"
         desc = "该列是 OpenSim IK 估计的颈部屈曲/伸展角时间序列。"
     elif lower == "neck_bending":
+        recognized_primary = True
         rank = BODY_RANKS["neck"]
         motion_rank = 1
         label = "颈部侧屈角（OpenSim IK）"
         desc = "该列是 OpenSim IK 估计的颈部侧屈角时间序列。"
     elif lower == "neck_rotation":
+        recognized_primary = True
         rank = BODY_RANKS["neck"]
         motion_rank = 2
         label = "颈部旋转角（OpenSim IK）"
         desc = "该列是 OpenSim IK 估计的颈部轴向旋转角时间序列。"
     elif "arm_flex" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["shoulder"]
         motion_rank = 0
         label = f"{side}肩关节屈曲/伸展角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}肩关节屈曲/伸展角时间序列。"
     elif "arm_add" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["shoulder"]
         motion_rank = 1
         label = f"{side}肩关节内收/外展角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}肩关节内收/外展角时间序列。"
     elif "arm_rot" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["shoulder"]
         motion_rank = 2
         label = f"{side}肩关节内旋/外旋角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}肩关节旋转角时间序列。"
     elif "elbow_flex" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["elbow"]
         motion_rank = 0
         label = f"{side}肘关节屈曲/伸展角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}肘关节屈曲/伸展角时间序列。"
     elif "pro_sup" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["forearm"]
         motion_rank = 2
         label = f"{side}前臂旋前/旋后角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}前臂旋前/旋后角时间序列。"
     elif "wrist_flex" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["wrist"]
         motion_rank = 0
         label = f"{side}腕关节屈曲/伸展角（OpenSim IK）"
         desc = f"该列是 OpenSim IK 估计的{side}腕关节屈曲/伸展角时间序列。"
     elif "wrist_dev" in lower:
+        recognized_primary = True
         rank = BODY_RANKS["wrist"]
         motion_rank = 1
         label = f"{side}腕关节桡偏/尺偏角（OpenSim IK）"
@@ -1039,6 +1059,15 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
         motion_rank = 3
         label = "OpenSim 平移辅助坐标（非关节活动度）"
         desc = "该列是 OpenSim 平移坐标，不是关节角，也不应作为关节 ROM 解读。"
+    if is_angle and not is_auxiliary and not recognized_primary:
+        is_auxiliary = True
+        rank = _body_rank_from_lower(lower)
+        motion_rank = 9
+        label = "未分类 OpenSim 旋转坐标（高级诊断）"
+        desc = (
+            "该列是 OpenSim IK 输出中的旋转类坐标，但当前报告无法根据列名稳定判定其关节、运动方向和正负含义。"
+            "因此它不会进入主曲线或重点指标，仅作为高级诊断数据保留。"
+        )
 
     movement_plane = _opensim_movement_plane(lower)
     neutral_definition, direction_definition = _opensim_neutral_direction(
@@ -1098,71 +1127,121 @@ def _opensim_neutral_direction(
     if "knee_angle" in lower:
         return (
             "0°通常接近 OpenSim 模型中的膝关节伸直位。",
-            "数值增大通常表示膝关节屈曲增加；数值减小表示更接近伸直或相对伸展。",
+            "正值：膝关节屈曲；负值：相对过伸或伸展方向。该模型的膝关节主坐标通常被限制在接近 0°以上，因此负值若出现应优先复核 IK 质量。",
         )
     if "hip_flexion" in lower:
         return (
             "0°对应 OpenSim 模型髋关节屈伸坐标的解剖中立位。",
-            "数值增大通常表示髋屈曲增加；数值减小或负值通常表示相对伸展。",
+            "正值：髋关节屈曲；负值：髋关节伸展。",
         )
     if "hip_adduction" in lower:
         return (
             "0°对应 OpenSim 模型髋关节额状面中立位。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述髋内收/外展方向的偏移。",
+            "正值：髋关节内收；负值：髋关节外展。",
         )
     if "hip_rotation" in lower:
         return (
             "0°对应 OpenSim 模型髋关节轴向旋转中立位。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述髋内旋/外旋方向的偏移。",
+            "正值：髋关节内旋；负值：髋关节外旋。",
         )
     if "ankle_angle" in lower:
         return (
             "0°通常接近 OpenSim 模型踝关节中立位。",
-            "数值增大通常表示背屈增加；数值减小或负值通常表示跖屈增加。",
+            "正值：踝关节背屈；负值：踝关节跖屈。",
         )
     if "subtalar_angle" in lower:
         return (
             "0°对应 OpenSim 模型距下关节中立位。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述足部内翻/外翻方向的偏移。",
+            "正值：足部内翻；负值：足部外翻。",
         )
     if "mtp_angle" in lower:
         return (
             "0°对应 OpenSim 模型跖趾关节中立位。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述跖趾屈曲/伸展方向的偏移。",
+            "正值：跖趾关节伸展；负值：跖趾关节屈曲。",
         )
     if "pelvis_tilt" in lower:
         return (
             "0°对应 OpenSim 模型骨盆前后倾坐标的参考中立姿态。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述骨盆前倾/后倾姿态变化。",
+            "正值：骨盆前倾；负值：骨盆后倾。",
         )
     if "pelvis_list" in lower:
         return (
             "0°对应 OpenSim 模型骨盆左右倾斜坐标的参考中立姿态。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述骨盆向左或向右倾斜。",
+            "正值：左侧骨盆相对抬高/右侧相对下降；负值：右侧骨盆相对抬高/左侧相对下降。",
         )
     if "pelvis_rotation" in lower:
         return (
             "0°对应 OpenSim 模型骨盆轴向旋转坐标的参考中立姿态。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述骨盆向左或向右旋转。",
+            "正值：骨盆向左旋转；负值：骨盆向右旋转。",
         )
-    if any(token in lower for token in ["flex_ext", "neck_flexion", "arm_flex", "elbow_flex", "wrist_flex"]):
+    if "neck_flexion" in lower:
+        return (
+            "0°对应 OpenSim 模型颈部屈伸坐标的中立位。",
+            "正值：颈部屈曲；负值：颈部伸展。",
+        )
+    if "arm_flex" in lower:
+        return (
+            "0°对应 OpenSim 模型肩关节屈伸坐标的中立位。",
+            "正值：肩关节屈曲；负值：肩关节伸展。",
+        )
+    if "elbow_flex" in lower:
+        return (
+            "0°通常接近 OpenSim 模型中的肘关节伸直位。",
+            "正值：肘关节屈曲；负值：肘关节伸展或相对过伸方向。",
+        )
+    if "wrist_flex" in lower:
+        return (
+            "0°对应 OpenSim 模型腕关节屈伸坐标的中立位。",
+            "正值：腕关节屈曲；负值：腕关节伸展。",
+        )
+    if "flex_ext" in lower:
         return (
             "0°对应 OpenSim 模型该关节或节段屈伸坐标的中立位。",
-            "数值增大通常表示屈曲方向增加；数值减小通常表示伸展方向增加或更接近中立位。",
+            "正值：屈曲方向；负值：伸展方向。",
         )
-    if any(token in lower for token in ["lat_bending", "neck_bending", "arm_add", "wrist_dev"]):
+    if "neck_bending" in lower:
+        return (
+            "0°对应 OpenSim 模型颈部侧屈坐标的中立位。",
+            "正值：向左侧屈；负值：向右侧屈。",
+        )
+    if "arm_add" in lower:
+        return (
+            "0°对应 OpenSim 模型肩关节内收/外展坐标的参考中立位。",
+            "正值：肩关节内收；负值：肩关节外展。上肢模型默认位可能不同于临床量角器 0°，解释时应结合处理后视频复核。",
+        )
+    if "wrist_dev" in lower:
+        return (
+            "0°对应 OpenSim 模型腕关节偏移坐标的中立位。",
+            "正值：腕关节桡偏；负值：腕关节尺偏。",
+        )
+    if "lat_bending" in lower:
         return (
             "0°对应 OpenSim 模型该关节或节段内外侧方向的中立位。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述侧屈、内收/外展或桡偏/尺偏方向的偏移。",
+            "正值：向左侧屈；负值：向右侧屈。",
         )
-    if any(token in lower for token in ["axial_rotation", "neck_rotation", "arm_rot", "pro_sup"]):
+    if "neck_rotation" in lower:
+        return (
+            "0°对应 OpenSim 模型颈部轴向旋转坐标的中立位。",
+            "正值：向左旋转；负值：向右旋转。",
+        )
+    if "arm_rot" in lower:
+        return (
+            "0°对应 OpenSim 模型肩关节轴向旋转坐标的中立位。",
+            "正值：肩关节内旋；负值：肩关节外旋。",
+        )
+    if "pro_sup" in lower:
+        return (
+            "0°对应 OpenSim 模型前臂旋前/旋后坐标的中立位。",
+            "正值：前臂旋前；负值：前臂旋后。",
+        )
+    if "axial_rotation" in lower:
         return (
             "0°对应 OpenSim 模型该关节或节段轴向旋转坐标的中立位。",
-            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述内外旋、旋前/旋后或轴向旋转方向的偏移。",
+            "正值：向左轴向旋转；负值：向右轴向旋转。",
         )
     return (
         "0°按 OpenSim 模型该旋转坐标的中立位定义。",
-        "数值方向沿用 OpenSim 原始坐标定义；解释时应结合模型文档、质量诊断和处理后视频复核。",
+        "该坐标未进入主报告。若在高级诊断中查看，正负方向应以具体 .osim 模型定义为准。",
     )
 
 
@@ -1638,16 +1717,15 @@ def _stats_table_html(stats: pd.DataFrame) -> str:
     for col in ["min", "time_at_min", "max", "time_at_max", "mean", "std", "rom"]:
         display[col] = display[col].map(lambda v: f"{v:.3f}")
     headers = [
-        "Metric",
-        "动作含义",
+        "指标",
         "类型",
-        "Unit",
-        "Min",
-        "Time@Min (s)",
-        "Max",
-        "Time@Max (s)",
-        "Mean",
-        "ROM (deg) / Range",
+        "单位",
+        "最小值",
+        "最小值时间 (s)",
+        "最大值",
+        "最大值时间 (s)",
+        "均值",
+        "活动范围/数值范围",
     ]
     rows = [
         "<div class='table-wrap'><table class='stats-table'><thead><tr>"
@@ -1663,9 +1741,9 @@ def _stats_table_html(stats: pd.DataFrame) -> str:
             f"aria-label='查看 {html.escape(angle, quote=True)} 的指标解释'>i</button>"
             "</span>"
         )
+        range_label = "活动范围" if str(row.get("range_label", "ROM")) == "ROM" else "数值范围"
         cells = [
             metric,
-            html.escape(str(row.get("action_label", row["movement_label"]))),
             html.escape("辅助数据" if bool(row.get("is_auxiliary")) else "角度指标" if bool(row.get("is_angle", True)) else "非角度指标"),
             html.escape(str(row.get("unit", "deg"))),
             html.escape(str(row["min"])),
@@ -1673,7 +1751,7 @@ def _stats_table_html(stats: pd.DataFrame) -> str:
             html.escape(str(row["max"])),
             html.escape(str(row["time_at_max"])),
             html.escape(str(row["mean"])),
-            html.escape(f"{row.get('range_label', 'ROM')}: {row['rom']}"),
+            html.escape(f"{range_label}: {row['rom']}"),
         ]
         rows.append(
             "<tr>"

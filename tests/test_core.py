@@ -192,7 +192,8 @@ class CoreTests(unittest.TestCase):
                 hip_flexion_r=[5, 25, 15],
                 pelvis_tx=[0.0, 0.1, 0.2],
                 knee_angle_r_beta=[1, 2, 3],
-            )[["time", "hip_flexion_r", "pelvis_tx", "knee_angle_r_beta"]]
+                custom_unknown_rotation=[0.0, 1.0, 2.0],
+            )[["time", "hip_flexion_r", "pelvis_tx", "knee_angle_r_beta", "custom_unknown_rotation"]]
             html_path = root / "report.html"
             quality = {
                 "status": "warn",
@@ -215,11 +216,17 @@ class CoreTests(unittest.TestCase):
             self.assertIn("0°位/中立位", html_text)
             self.assertIn('"rom": 90.0', html_text)
             self.assertNotIn("Right knee", html_text)
-            self.assertIn("ROM (deg) / Range", html_text)
+            self.assertIn("活动范围/数值范围", html_text)
+            self.assertNotIn("<th>Metric</th>", html_text)
+            self.assertNotIn("<th>动作含义</th>", html_text)
+            self.assertNotIn("<th>Unit</th>", html_text)
+            self.assertNotIn("ROM (deg) / Range", html_text)
             self.assertIn("OpenSim IK 关节活动角（高级）", html_text)
             self.assertIn("右侧髋关节屈曲/伸展角（OpenSim IK）", html_text)
+            self.assertIn("正值：髋关节屈曲；负值：髋关节伸展", html_text)
             self.assertIn("高级诊断附录", html_text)
             self.assertIn("骨盆前后平移（辅助数据，非关节活动度）", html_text)
+            self.assertIn("未分类 OpenSim 旋转坐标（高级诊断）", html_text)
             self.assertIn('"is_plottable": false', html_text)
             self.assertNotIn("OpenSim 模型坐标", html_text)
             self.assertNotIn("selected.size === 0 ||", html_text)
@@ -269,8 +276,12 @@ class CoreTests(unittest.TestCase):
         self.assertTrue(hip["is_plottable"])
         self.assertIn("marker error", hip["interpretation"])
         self.assertIn("0°对应 OpenSim 模型髋关节", hip["neutral_definition"])
-        self.assertIn("髋屈曲增加", hip["direction_definition"])
+        self.assertIn("正值：髋关节屈曲；负值：髋关节伸展", hip["direction_definition"])
         self.assertTrue(hip["is_primary_rom_metric"])
+        ankle = measure_metadata("ankle_angle_r", ik)
+        self.assertIn("正值：踝关节背屈；负值：踝关节跖屈", ankle["direction_definition"])
+        pelvis_rotation = measure_metadata("pelvis_rotation", ik)
+        self.assertIn("正值：骨盆向左旋转；负值：骨盆向右旋转", pelvis_rotation["direction_definition"])
         pelvis_tx = measure_metadata("pelvis_tx", ik)
         self.assertEqual(pelvis_tx["unit"], "m")
         self.assertFalse(pelvis_tx["is_angle"])
@@ -280,6 +291,9 @@ class CoreTests(unittest.TestCase):
         knee_beta = measure_metadata("knee_angle_r_beta", ik)
         self.assertTrue(knee_beta["is_auxiliary"])
         self.assertFalse(knee_beta["is_plottable"])
+        unknown = measure_metadata("custom_unknown_rotation", ik)
+        self.assertTrue(unknown["is_auxiliary"])
+        self.assertFalse(unknown["is_plottable"])
 
     def test_report_statistics_sort_and_filter_metrics(self) -> None:
         df = pd.DataFrame(
