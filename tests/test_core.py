@@ -101,6 +101,7 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(list(df.columns), ["time", "Right knee", "Left knee"])
             stats = angle_statistics(df)
             self.assertEqual(set(stats["angle"]), {"Right knee", "Left knee"})
+            self.assertNotIn("rom_note", stats.columns)
 
             html_path = root / "report.html"
             quality = {

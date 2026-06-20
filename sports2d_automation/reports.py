@@ -562,6 +562,7 @@ def angle_statistics(
     df: pd.DataFrame,
     kind: dict[str, str] | None = None,
     quality: dict[str, Any] | None = None,
+    report_details: bool = False,
 ) -> pd.DataFrame:
     rows = []
     if "time" not in df.columns:
@@ -577,27 +578,31 @@ def angle_statistics(
         min_idx = series.idxmin()
         max_idx = series.idxmax()
         meta = measure_metadata(column, kind, camera_note)
-        rows.append(
-            {
-                "angle": column,
-                "display_name": meta["display_name"],
-                "kind_short": kind["kind_short"],
-                "kind": kind.get("kind", kind["kind_short"]),
-                "kind_note": kind.get("kind_note", ""),
-                "movement_label": meta["movement_label"],
-                "description": meta["description"],
-                "interpretation": meta["interpretation"],
-                "camera_note": meta["camera_note"],
-                "rom_note": ROM_NOTE,
-                "min": float(series.min()),
-                "time_at_min": float(df.loc[min_idx, "time"]),
-                "max": float(series.max()),
-                "time_at_max": float(df.loc[max_idx, "time"]),
-                "mean": float(series.mean()),
-                "std": float(series.std()) if len(series.dropna()) > 1 else 0.0,
-                "rom": float(series.max() - series.min()),
-            }
-        )
+        row = {
+            "angle": column,
+            "display_name": meta["display_name"],
+            "kind_short": kind["kind_short"],
+            "movement_label": meta["movement_label"],
+            "description": meta["description"],
+            "interpretation": meta["interpretation"],
+            "min": float(series.min()),
+            "time_at_min": float(df.loc[min_idx, "time"]),
+            "max": float(series.max()),
+            "time_at_max": float(df.loc[max_idx, "time"]),
+            "mean": float(series.mean()),
+            "std": float(series.std()) if len(series.dropna()) > 1 else 0.0,
+            "rom": float(series.max() - series.min()),
+        }
+        if report_details:
+            row.update(
+                {
+                    "kind": kind.get("kind", kind["kind_short"]),
+                    "kind_note": kind.get("kind_note", ""),
+                    "camera_note": meta["camera_note"],
+                    "rom_note": ROM_NOTE,
+                }
+            )
+        rows.append(row)
     return pd.DataFrame(rows)
 
 
@@ -777,7 +782,7 @@ def _motion_payload(path: Path, df: pd.DataFrame, quality: dict[str, Any] | None
     kind = classify_motion_file(path)
     camera_note = _camera_plane_note(quality)
     kind["camera_note"] = camera_note
-    stats = angle_statistics(safe, kind, quality)
+    stats = angle_statistics(safe, kind, quality, report_details=True)
     stats_records = _records(stats)
     return {
         "name": path.stem,
