@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pandas as pd
+
 from sports2d_automation.config import build_sports2d_config
 from sports2d_automation.gui import HELP_TEXTS
 from sports2d_automation.models import AnalysisSettings
@@ -103,6 +105,12 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(set(stats["angle"]), {"Right knee", "Left knee"})
             self.assertNotIn("rom_note", stats.columns)
 
+            ik_mot = root / "demo_ik.mot"
+            ik_df = df.assign(
+                hip_flexion_r=[5, 25, 15],
+                pelvis_tx=[0.0, 0.1, 0.2],
+                knee_angle_r_beta=[1, 2, 3],
+            )[["time", "hip_flexion_r", "pelvis_tx", "knee_angle_r_beta"]]
             html_path = root / "report.html"
             quality = {
                 "status": "warn",
@@ -111,7 +119,7 @@ class CoreTests(unittest.TestCase):
                 "marker_error_logs": [],
                 "run_log_insights": {"sports2d_seen_from": "front", "configured_visible_side": "right"},
             }
-            write_html_report(html_path, "demo", [(mot, df)], None, None, quality)
+            write_html_report(html_path, "demo", [(mot, df), (ik_mot, ik_df)], None, None, quality)
             html_text = html_path.read_text(encoding="utf-8")
             self.assertIn("<title>Sports2D 运动学分析报告</title>", html_text)
             self.assertIn("<h1>Sports2D 运动学分析报告</h1>", html_text)
@@ -121,7 +129,13 @@ class CoreTests(unittest.TestCase):
             self.assertIn("metricModal", html_text)
             self.assertIn("metric-info", html_text)
             self.assertIn("Right knee", html_text)
-            self.assertIn("ROM (deg)", html_text)
+            self.assertIn("ROM (deg) / Range", html_text)
+            self.assertIn("OpenSim IK 关节角（高级）", html_text)
+            self.assertIn("右侧髋关节屈曲/伸展角（OpenSim IK）", html_text)
+            self.assertIn("骨盆前后平移（辅助数据，非关节活动度）", html_text)
+            self.assertIn('"is_plottable": false', html_text)
+            self.assertNotIn("OpenSim 模型坐标", html_text)
+            self.assertNotIn("selected.size === 0 ||", html_text)
             self.assertIn("正面或背面视角", html_text)
             self.assertNotIn("角度定义与动作含义", html_text)
             self.assertIn("2D 视频平面角", html_text)
@@ -141,12 +155,44 @@ class CoreTests(unittest.TestCase):
     def test_measure_metadata_explains_2d_and_ik_angles(self) -> None:
         sports2d = {"kind_short": "2D平面角", "kind": "Sports2D 2D 视频平面角", "kind_note": ""}
         knee = measure_metadata("Right knee", sports2d)
-        self.assertIn("膝屈曲", knee["movement_label"])
+        self.assertIn("膝关节屈曲", knee["movement_label"])
         self.assertIn("视频平面", knee["description"] + knee["interpretation"])
-        ik = {"kind_short": "OpenSim IK", "kind": "OpenSim IK 模型坐标", "kind_note": ""}
+        ik = {"kind_short": "OpenSim IK 关节角（高级）", "kind": "OpenSim IK 关节角（高级）", "kind_note": ""}
         hip = measure_metadata("hip_flexion_r", ik)
-        self.assertIn("髋屈曲", hip["movement_label"])
+        self.assertIn("右侧髋关节屈曲/伸展角", hip["movement_label"])
+        self.assertEqual(hip["unit"], "deg")
+        self.assertTrue(hip["is_plottable"])
         self.assertIn("marker error", hip["interpretation"])
+        pelvis_tx = measure_metadata("pelvis_tx", ik)
+        self.assertEqual(pelvis_tx["unit"], "m")
+        self.assertFalse(pelvis_tx["is_angle"])
+        self.assertTrue(pelvis_tx["is_auxiliary"])
+        self.assertFalse(pelvis_tx["is_plottable"])
+        knee_beta = measure_metadata("knee_angle_r_beta", ik)
+        self.assertTrue(knee_beta["is_auxiliary"])
+        self.assertFalse(knee_beta["is_plottable"])
+
+    def test_report_statistics_sort_and_filter_metrics(self) -> None:
+        df = pd.DataFrame(
+            {
+                "time": [0.0, 1.0],
+                "ankle_angle_r": [1.0, 2.0],
+                "hip_flexion_l": [3.0, 8.0],
+                "pelvis_tx": [0.0, 0.1],
+                "neck_flexion": [2.0, 5.0],
+                "knee_angle_l": [4.0, 9.0],
+                "hip_adduction_l": [1.0, 6.0],
+            }
+        )
+        kind = {"kind_short": "OpenSim IK 关节角（高级）", "kind": "OpenSim IK 关节角（高级）", "kind_note": ""}
+        stats = angle_statistics(df, kind, report_details=True)
+        self.assertEqual(
+            list(stats["angle"]),
+            ["neck_flexion", "pelvis_tx", "hip_flexion_l", "hip_adduction_l", "knee_angle_l", "ankle_angle_r"],
+        )
+        self.assertFalse(bool(stats.loc[stats["angle"] == "pelvis_tx", "is_plottable"].iloc[0]))
+        self.assertEqual(stats.loc[stats["angle"] == "pelvis_tx", "range_label"].iloc[0], "Range")
+        self.assertEqual(stats.loc[stats["angle"] == "hip_flexion_l", "range_label"].iloc[0], "ROM")
 
     def test_marker_error_quality_diagnostics(self) -> None:
         text = "\n".join(

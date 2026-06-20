@@ -39,6 +39,32 @@ ROM_NOTE = (
     "单位为度。它是本次视频片段中实际观测到的角度变化范围，不是临床或解剖学意义上的"
     "最大关节活动度，也不代表受试者的生理活动上限。"
 )
+AUXILIARY_RANGE_NOTE = (
+    "该指标不是关节活动度。Range 表示该辅助量在当前分析时间范围内的最大值减最小值，"
+    "仅用于排查 OpenSim 模型或骨盆/躯干平移变化，不应解释为关节 ROM。"
+)
+
+BODY_RANKS = {
+    "head": 10,
+    "neck": 10,
+    "trunk": 20,
+    "spine": 20,
+    "lumbar": 20,
+    "pelvis": 30,
+    "shoulder": 40,
+    "arm": 40,
+    "elbow": 50,
+    "forearm": 50,
+    "wrist": 60,
+    "hip": 70,
+    "thigh": 70,
+    "knee": 80,
+    "shank": 80,
+    "ankle": 90,
+    "subtalar": 92,
+    "mtp": 94,
+    "foot": 100,
+}
 
 
 def read_mot(mot_path: Path) -> pd.DataFrame:
@@ -232,7 +258,7 @@ def write_html_report(
     h1 {{ margin:0 0 6px; font-size:24px; font-weight:700; letter-spacing:0; }}
     h2 {{ margin:0 0 10px; font-size:18px; font-weight:700; letter-spacing:0; }}
     h3 {{ margin:0 0 8px; font-size:15px; font-weight:700; letter-spacing:0; }}
-    .header-row {{ display:flex; align-items:flex-start; justify-content:space-between; gap:18px; max-width:1480px; margin:0 auto; }}
+    .header-row {{ max-width:1480px; margin:0 auto; }}
     main {{ max-width:1480px; margin:0 auto; padding:18px 24px 32px; display:grid; grid-template-columns:minmax(420px, 0.95fr) minmax(480px, 1.15fr); gap:16px; }}
     section {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; min-width:0; }}
     .full {{ grid-column:1 / -1; }}
@@ -254,15 +280,17 @@ def write_html_report(
     .metric-card dd {{ margin:0; text-align:right; font-variant-numeric:tabular-nums; }}
     .seek-button {{ border:1px solid var(--line); background:#fff; border-radius:6px; padding:3px 7px; cursor:pointer; font-size:12px; }}
     .quality {{ display:grid; grid-template-columns:190px minmax(0, 1fr); gap:14px; align-items:start; }}
-    .quality-summary {{ flex:0 1 520px; border:1px solid var(--line); border-radius:8px; padding:11px 12px; background:#fff; }}
-    .quality-summary-row {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
-    .quality-summary-text {{ margin:8px 0 0; color:var(--muted); font-size:13px; }}
+    .quality-summary {{ margin-top:12px; display:flex; align-items:center; gap:12px; flex-wrap:wrap; border:1px solid var(--line); border-radius:8px; padding:10px 12px; background:#fff; }}
+    .quality-summary-title {{ display:flex; align-items:center; gap:8px; flex:0 0 auto; }}
+    .quality-summary-text {{ margin:0; color:var(--muted); font-size:13px; flex:1 1 360px; }}
     .badge {{ display:inline-block; border-radius:999px; padding:5px 10px; color:#fff; background:var(--muted); font-weight:700; }}
     .badge.good {{ background:var(--good); }}
     .badge.warn {{ background:var(--warn); }}
     .badge.fail {{ background:var(--bad); }}
     .icon-button {{ display:inline-flex; align-items:center; justify-content:center; min-width:32px; min-height:32px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--ink); font-weight:700; cursor:pointer; }}
     .icon-button:hover, .icon-button:focus-visible {{ border-color:var(--accent); outline:2px solid var(--accent-soft); outline-offset:2px; }}
+    .detail-button {{ border:1px solid var(--accent); background:var(--accent-soft); color:#0f4f49; border-radius:999px; padding:6px 10px; min-height:34px; cursor:pointer; font-weight:700; }}
+    .detail-button:hover, .detail-button:focus-visible {{ outline:2px solid var(--accent-soft); outline-offset:2px; }}
     .info-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px; }}
     .info-card {{ border:1px solid var(--line); border-radius:8px; padding:12px; background:#fff; }}
     .info-card.good {{ background:var(--good-soft); border-color:#b7e4cc; }}
@@ -288,7 +316,7 @@ def write_html_report(
     .modal-content dl {{ display:grid; grid-template-columns:140px minmax(0, 1fr); gap:8px 14px; margin:0; }}
     .modal-content dt {{ color:var(--muted); font-weight:700; }}
     .modal-content dd {{ margin:0; }}
-    @media (max-width: 980px) {{ .header-row {{ flex-direction:column; }} main {{ grid-template-columns:1fr; padding:12px; }} .quality {{ grid-template-columns:1fr; }} .plot {{ height:460px; }} .modal-content dl {{ grid-template-columns:1fr; }} }}
+    @media (max-width: 980px) {{ main {{ grid-template-columns:1fr; padding:12px; }} .quality {{ grid-template-columns:1fr; }} .plot {{ height:460px; }} .modal-content dl {{ grid-template-columns:1fr; }} }}
   </style>
   <script>{plotly_js}</script>
 </head>
@@ -392,8 +420,9 @@ def write_html_report(
     function renderMetricControls(index) {{
       const item = motionPayload[index];
       const defaults = new Set(item.default_metrics || []);
+      const plottedStats = item.stats.filter(stat => stat.is_plottable);
       controls.innerHTML = '';
-      item.stats.forEach(stat => {{
+      plottedStats.forEach(stat => {{
         const label = document.createElement('label');
         label.className = 'metric-option';
         const input = document.createElement('input');
@@ -414,15 +443,15 @@ def write_html_report(
     function applyMetricSelection(index) {{
       const selected = new Set(selectedNames());
       const traces = figPayload[index].data || [];
-      const visible = traces.map(trace => selected.size === 0 || selected.has(trace.name) ? true : 'legendonly');
+      const visible = traces.map(trace => selected.has(trace.name) ? true : 'legendonly');
       if (visible.length) Plotly.restyle(plot, 'visible', visible);
     }}
 
     function renderMetricCards(index) {{
       const selected = new Set(selectedNames());
-      const rows = motionPayload[index].stats.filter(stat => selected.size === 0 || selected.has(stat.angle));
+      const rows = motionPayload[index].stats.filter(stat => stat.is_plottable && selected.has(stat.angle));
       if (!rows.length) {{
-        cards.innerHTML = '<p class="muted">请至少选择一个关节或节段。</p>';
+        cards.innerHTML = '<p class="muted">未选择重点指标。勾选上方指标后，将在此处显示 ROM、峰值时间和统计摘要。</p>';
         return;
       }}
       cards.innerHTML = rows.map(stat => `
@@ -462,11 +491,12 @@ def write_html_report(
       metricModalContent.innerHTML = `
         <dl>
           <dt>动作含义</dt><dd>${{escapeHtml(stat.movement_label)}}</dd>
-          <dt>数据来源</dt><dd>${{escapeHtml(stat.kind)}}。${{escapeHtml(stat.kind_note || '')}}</dd>
+          <dt>数据来源</dt><dd>${{escapeHtml(stat.source || stat.kind)}}。${{escapeHtml(stat.kind_note || '')}}</dd>
+          <dt>指标类型</dt><dd>${{stat.is_auxiliary ? '辅助数据，不作为核心活动度指标' : (stat.is_angle ? '角度指标' : '非角度指标')}}；单位：${{escapeHtml(stat.unit || 'deg')}}</dd>
           <dt>计算定义</dt><dd>${{escapeHtml(stat.description)}}</dd>
           <dt>解释边界</dt><dd>${{escapeHtml(stat.interpretation)}}</dd>
           <dt>拍摄平面提示</dt><dd>${{escapeHtml(stat.camera_note)}}</dd>
-          <dt>ROM 说明</dt><dd>${{escapeHtml(stat.rom_note)}}</dd>
+          <dt>${{escapeHtml(stat.range_label || 'ROM')}} 说明</dt><dd>${{escapeHtml(stat.rom_note)}}</dd>
         </dl>
       `;
       openModal(metricModal);
@@ -585,6 +615,12 @@ def angle_statistics(
             "movement_label": meta["movement_label"],
             "description": meta["description"],
             "interpretation": meta["interpretation"],
+            "_sort_key": (
+                meta["body_region_rank"],
+                meta["side_rank"],
+                meta["motion_rank"],
+                column.lower(),
+            ),
             "min": float(series.min()),
             "time_at_min": float(df.loc[min_idx, "time"]),
             "max": float(series.max()),
@@ -598,11 +634,26 @@ def angle_statistics(
                 {
                     "kind": kind.get("kind", kind["kind_short"]),
                     "kind_note": kind.get("kind_note", ""),
+                    "source": meta["source"],
+                    "unit": meta["unit"],
+                    "is_angle": meta["is_angle"],
+                    "is_auxiliary": meta["is_auxiliary"],
+                    "is_plottable": meta["is_plottable"],
+                    "body_region_rank": meta["body_region_rank"],
+                    "side_rank": meta["side_rank"],
+                    "motion_rank": meta["motion_rank"],
+                    "action_label": meta["action_label"],
+                    "explanation": meta["explanation"],
+                    "range_label": "ROM" if meta["is_angle"] and not meta["is_auxiliary"] else "Range",
                     "camera_note": meta["camera_note"],
-                    "rom_note": ROM_NOTE,
+                    "rom_note": ROM_NOTE if meta["is_angle"] and not meta["is_auxiliary"] else AUXILIARY_RANGE_NOTE,
                 }
             )
         rows.append(row)
+    if report_details:
+        rows.sort(key=lambda item: item["_sort_key"])
+    for row in rows:
+        row.pop("_sort_key", None)
     return pd.DataFrame(rows)
 
 
@@ -610,12 +661,12 @@ def classify_motion_file(path: Path) -> dict[str, str]:
     stem = path.stem.lower()
     if stem.endswith("_ik") or "_ik" in stem:
         return {
-            "kind_short": "OpenSim IK",
-            "kind": "OpenSim IK 模型坐标",
-            "kind_note": "这是 OpenSim 逆运动学输出的模型坐标；请结合 marker error 和拍摄条件判断可信度。",
+            "kind_short": "OpenSim IK 关节角（高级）",
+            "kind": "OpenSim IK 关节角（高级）",
+            "kind_note": "这是 OpenSim 逆运动学输出。旋转类 coordinate 按关节角时间序列解释；平移和辅助约束列仅作为高级诊断数据，不代表关节活动度。",
         }
     return {
-        "kind_short": "2D平面角",
+        "kind_short": "Sports2D 2D 平面角",
         "kind": "Sports2D 2D 视频平面角",
         "kind_note": "这是由视频平面关键点计算的 2D 角度，不是完整三维解剖角。",
     }
@@ -629,88 +680,308 @@ def measure_metadata(
     display = name.strip()
     lower = name.lower()
     camera_note = camera_note or kind.get("camera_note") or _camera_plane_note(None)
-    if kind["kind_short"] == "OpenSim IK":
+    if str(kind["kind_short"]).startswith("OpenSim IK"):
         return _opensim_measure_metadata(name, display, lower, camera_note)
     return _sports2d_measure_metadata(name, display, lower, camera_note)
 
 
+def _side_metadata(lower: str) -> tuple[str, int]:
+    if lower.startswith("left ") or lower.endswith("_l") or "_l_" in lower:
+        return "左侧", 0
+    if lower.startswith("right ") or lower.endswith("_r") or "_r_" in lower:
+        return "右侧", 1
+    return "中线/整体", 2
+
+
+def _metric_payload(
+    display: str,
+    *,
+    source: str,
+    unit: str,
+    is_angle: bool,
+    is_auxiliary: bool,
+    body_region_rank: int,
+    side_rank: int,
+    motion_rank: int,
+    action_label: str,
+    description: str,
+    interpretation: str,
+    camera_note: str,
+) -> dict[str, Any]:
+    return {
+        "display_name": display,
+        "movement_label": action_label,
+        "action_label": action_label,
+        "description": description,
+        "explanation": description,
+        "interpretation": f"{interpretation} {camera_note}".strip(),
+        "source": source,
+        "unit": unit,
+        "is_angle": is_angle,
+        "is_auxiliary": is_auxiliary,
+        "is_plottable": bool(is_angle and not is_auxiliary),
+        "body_region_rank": body_region_rank,
+        "side_rank": side_rank,
+        "motion_rank": motion_rank,
+        "camera_note": camera_note,
+    }
+
+
 def _sports2d_measure_metadata(name: str, display: str, lower: str, camera_note: str) -> dict[str, str]:
-    side = "右侧" if "right" in lower else "左侧" if "left" in lower else "中线/整体"
+    side, side_rank = _side_metadata(lower)
+    source = "Sports2D 2D 平面角"
     if "ankle" in lower:
-        label = f"{side}踝背屈/跖屈趋势"
+        rank = BODY_RANKS["ankle"]
+        label = f"{side}踝关节背屈/跖屈平面角"
         desc = "Sports2D 使用足跟、大脚趾、踝和膝等二维关键点在视频画面中的几何关系计算踝关节平面角。该值描述的是画面平面内的小腿与足部之间的夹角变化。"
         interp = "在标准侧向拍摄且运动主要发生在矢状面时，可作为踝背屈/跖屈趋势的参考；在正面、背面或明显斜向拍摄时，不应解释为真实三维踝关节背屈角或跖屈角。"
     elif "knee" in lower:
-        label = f"{side}膝屈曲/伸展趋势"
+        rank = BODY_RANKS["knee"]
+        label = f"{side}膝关节屈曲/伸展平面角"
         desc = "Sports2D 根据髋、膝、踝三个二维关键点计算膝关节在视频平面内的夹角。该指标反映大腿与小腿在画面中的相对折叠程度。"
         interp = "侧向拍摄时通常用于描述膝屈曲/伸展趋势；正面或背面拍摄时，它更接近画面内的投影夹角，不能直接等同于矢状面膝屈曲角。"
     elif "hip" in lower:
-        label = f"{side}髋屈曲/伸展趋势"
+        rank = BODY_RANKS["hip"]
+        label = f"{side}髋关节屈曲/伸展平面角"
         desc = "Sports2D 以膝、髋、肩三个二维关键点形成的夹角描述髋部相对躯干和下肢的画面内角度变化。"
         interp = "侧向拍摄且躯干与下肢主要在矢状面运动时，可用于观察髋屈曲/伸展趋势；正面、背面或斜向拍摄会混入髋外展、躯干侧倾和透视投影影响。"
     elif "shoulder" in lower:
-        label = f"{side}肩屈曲/伸展趋势"
+        rank = BODY_RANKS["shoulder"]
+        label = f"{side}肩关节屈曲/伸展平面角"
         desc = "Sports2D 通过髋、肩、肘三个二维关键点计算上臂相对躯干的画面内夹角。"
         interp = "该指标适合观察上臂相对躯干在视频平面内的运动趋势；它不是肩关节三维屈曲、外展、内外旋的分解结果。"
     elif "elbow" in lower:
-        label = f"{side}肘屈曲/伸展趋势"
+        rank = BODY_RANKS["elbow"]
+        label = f"{side}肘关节屈曲/伸展平面角"
         desc = "Sports2D 根据腕、肘、肩三个二维关键点计算肘关节在视频平面内的夹角。"
         interp = "多数情况下可用于描述肘屈曲/伸展趋势，但前臂旋前/旋后、遮挡和透视投影会改变二维关键点位置，从而影响该角度。"
     elif "wrist" in lower:
-        label = f"{side}腕部平面角"
+        rank = BODY_RANKS["wrist"]
+        label = f"{side}腕关节平面角"
         desc = "该指标来自腕部及相邻肢段关键点在视频平面中的几何关系，通常比髋、膝、踝等大关节更容易受到关键点检测误差影响。"
         interp = "腕部角度应结合处理后视频逐段核对，尤其是在手部遮挡、快速摆动或器械遮挡明显时，不宜单独作为结论依据。"
     elif any(segment in lower for segment in ["foot", "shank", "thigh", "pelvis", "trunk", "head", "arm", "forearm"]):
-        label = "节段相对水平线角度"
+        rank = _body_rank_from_lower(lower)
+        segment_name = _segment_label(lower)
+        label = f"{side}{segment_name}相对水平线角度"
         desc = "节段角表示对应身体节段在视频平面中相对水平线的方向角，通常按画面坐标系中的逆时针方向计算。"
         interp = "节段角描述节段姿态，不是关节夹角。若摄像机存在倾斜、视频被旋转或地面角校正不准确，节段角会首先受到影响。"
     else:
+        rank = 110
         label = "视频平面角"
         desc = "该列来自 Sports2D 输出的运动学文件，表示由二维关键点或节段方向计算得到的视频平面几何角。"
-        interp = "应结合列名、拍摄方向、处理后视频和质量诊断解释该指标，不应自动视为三维解剖角或 OpenSim 模型坐标。"
-    return {
-        "display_name": display,
-        "movement_label": label,
-        "description": desc,
-        "interpretation": f"{interp} {camera_note}",
-        "camera_note": camera_note,
-    }
+        interp = "应结合列名、拍摄方向、处理后视频和质量诊断解释该指标，不应自动视为三维解剖角或可靠的 OpenSim IK 结果。"
+    return _metric_payload(
+        display,
+        source=source,
+        unit="deg",
+        is_angle=True,
+        is_auxiliary=False,
+        body_region_rank=rank,
+        side_rank=side_rank,
+        motion_rank=0,
+        action_label=label,
+        description=desc,
+        interpretation=interp,
+        camera_note=camera_note,
+    )
 
 
 def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: str) -> dict[str, str]:
-    if "hip_flexion" in lower:
-        label = "髋屈曲/伸展坐标"
+    side, side_rank = _side_metadata(lower)
+    source = "OpenSim IK"
+    is_angle = True
+    is_auxiliary = False
+    unit = "deg"
+    rank = 110
+    motion_rank = 8
+    label = "OpenSim IK 角度"
+    desc = "该列来自 OpenSim 逆运动学 MOT 文件。旋转类 coordinate 在本报告中按关节角时间序列解释。"
+    interp = "只有当 marker error、人体尺度、拍摄方向、标定和模型匹配均合理时，才建议进一步按三维关节角解释。若质量诊断提示异常，应优先信任处理后视频中的 2D 骨架和 Sports2D 原生平面角。"
+
+    if lower in {"pelvis_tx", "pelvis_ty", "pelvis_tz"}:
+        axis = {"pelvis_tx": "前后", "pelvis_ty": "上下", "pelvis_tz": "左右"}[lower]
+        is_angle = False
+        is_auxiliary = True
+        unit = "m"
+        rank = BODY_RANKS["pelvis"]
+        motion_rank = 3
+        label = f"骨盆{axis}平移（辅助数据，非关节活动度）"
+        desc = "该列是 OpenSim 骨盆平移坐标，单位通常为米，用于描述模型整体位置变化。它不是关节角，也不是关节活动度。"
+    elif lower in {"pelvis_tilt", "pelvis_list", "pelvis_rotation"}:
+        rank = BODY_RANKS["pelvis"]
+        mapping = {
+            "pelvis_tilt": ("骨盆前倾/后倾角", 0),
+            "pelvis_list": ("骨盆左右倾斜角", 1),
+            "pelvis_rotation": ("骨盆轴向旋转角", 2),
+        }
+        label, motion_rank = mapping[lower]
+        desc = f"该列是 OpenSim IK 估计的{label}时间序列，反映骨盆相对模型坐标系的旋转姿态。"
+    elif "hip_flexion" in lower:
+        rank = BODY_RANKS["hip"]
+        motion_rank = 0
+        label = f"{side}髋关节屈曲/伸展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}髋关节屈曲/伸展角时间序列。ROM 表示当前片段内该角度的最大值减最小值。"
     elif "hip_adduction" in lower:
-        label = "髋内收/外展坐标"
+        rank = BODY_RANKS["hip"]
+        motion_rank = 1
+        label = f"{side}髋关节内收/外展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}髋关节额状面内收/外展角时间序列。"
     elif "hip_rotation" in lower:
-        label = "髋内旋/外旋坐标"
-    elif "knee" in lower:
-        label = "膝屈曲/伸展坐标"
-    elif "ankle" in lower:
-        label = "踝背屈/跖屈坐标"
-    elif "pelvis" in lower:
-        label = "骨盆姿态坐标"
-    elif "lumbar" in lower:
-        label = "腰椎/躯干姿态坐标"
+        rank = BODY_RANKS["hip"]
+        motion_rank = 2
+        label = f"{side}髋关节内旋/外旋角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}髋关节轴向旋转角时间序列。"
+    elif re.search(r"knee_angle_[rl]$", lower):
+        rank = BODY_RANKS["knee"]
+        motion_rank = 0
+        label = f"{side}膝关节屈曲/伸展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}膝关节屈曲/伸展角时间序列。ROM 表示当前片段内膝屈伸角的观测变化范围。"
+    elif "knee_angle" in lower and "beta" in lower:
+        rank = BODY_RANKS["knee"]
+        motion_rank = 9
+        is_auxiliary = True
+        label = f"{side}膝关节辅助约束角（非核心活动度）"
+        desc = "该列是 OpenSim 膝关节模型的辅助约束坐标，不作为用户报告中的核心膝关节活动度指标。"
+    elif "ankle_angle" in lower:
+        rank = BODY_RANKS["ankle"]
+        motion_rank = 0
+        label = f"{side}踝关节背屈/跖屈角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}踝关节背屈/跖屈角时间序列。"
+    elif "subtalar_angle" in lower:
+        rank = BODY_RANKS["subtalar"]
+        motion_rank = 1
+        label = f"{side}距下关节内翻/外翻角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}距下关节内翻/外翻角时间序列。"
+    elif "mtp_angle" in lower:
+        rank = BODY_RANKS["mtp"]
+        motion_rank = 0
+        label = f"{side}跖趾关节屈曲/伸展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}跖趾关节屈曲/伸展角时间序列。"
+    elif any(token in lower for token in ["flex_ext", "lat_bending", "axial_rotation"]):
+        rank = BODY_RANKS["spine"]
+        segment = name.rsplit("_", 2)[0].replace("_", "-")
+        if "flex_ext" in lower:
+            label = f"{segment} 脊柱屈曲/伸展角（OpenSim IK）"
+            motion_rank = 0
+        elif "lat_bending" in lower:
+            label = f"{segment} 脊柱侧屈角（OpenSim IK）"
+            motion_rank = 1
+        else:
+            label = f"{segment} 脊柱轴向旋转角（OpenSim IK）"
+            motion_rank = 2
+        desc = f"该列是 OpenSim IK 估计的{label.replace('（OpenSim IK）', '')}时间序列。"
+    elif lower.startswith("abs_t"):
+        is_angle = False
+        is_auxiliary = True
+        unit = "m"
+        rank = BODY_RANKS["trunk"]
+        motion_rank = 3
+        label = "躯干/腹部模型辅助平移（非关节活动度）"
+        desc = "该列是 OpenSim 模型的辅助平移坐标，不是关节角，也不应作为关节 ROM 解读。"
+    elif lower.startswith("abs_r"):
+        is_auxiliary = True
+        rank = BODY_RANKS["trunk"]
+        motion_rank = 9
+        label = "躯干/腹部模型辅助旋转角（非核心活动度）"
+        desc = "该列是 OpenSim 模型的辅助旋转坐标，通常用于模型求解，不作为核心关节活动度指标展示。"
+    elif lower == "neck_flexion":
+        rank = BODY_RANKS["neck"]
+        motion_rank = 0
+        label = "颈部屈曲/伸展角（OpenSim IK）"
+        desc = "该列是 OpenSim IK 估计的颈部屈曲/伸展角时间序列。"
+    elif lower == "neck_bending":
+        rank = BODY_RANKS["neck"]
+        motion_rank = 1
+        label = "颈部侧屈角（OpenSim IK）"
+        desc = "该列是 OpenSim IK 估计的颈部侧屈角时间序列。"
+    elif lower == "neck_rotation":
+        rank = BODY_RANKS["neck"]
+        motion_rank = 2
+        label = "颈部旋转角（OpenSim IK）"
+        desc = "该列是 OpenSim IK 估计的颈部轴向旋转角时间序列。"
     elif "arm_flex" in lower:
-        label = "肩屈曲/伸展坐标"
+        rank = BODY_RANKS["shoulder"]
+        motion_rank = 0
+        label = f"{side}肩关节屈曲/伸展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}肩关节屈曲/伸展角时间序列。"
     elif "arm_add" in lower:
-        label = "肩内收/外展坐标"
+        rank = BODY_RANKS["shoulder"]
+        motion_rank = 1
+        label = f"{side}肩关节内收/外展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}肩关节内收/外展角时间序列。"
     elif "arm_rot" in lower:
-        label = "肩旋转坐标"
-    elif "elbow" in lower:
-        label = "肘屈曲/伸展坐标"
-    elif "wrist" in lower:
-        label = "腕关节坐标"
-    else:
-        label = "OpenSim 模型坐标"
-    return {
-        "display_name": display,
-        "movement_label": label,
-        "description": "该列来自 OpenSim 逆运动学 MOT 文件，是模型坐标而不是 Sports2D 原生 2D 视频平面角。",
-        "interpretation": "只有当 marker error、人体尺度、拍摄方向、标定和模型匹配均合理时，才建议进一步按三维模型坐标解释。若质量诊断提示异常，应优先信任处理后视频中的 2D 骨架和 Sports2D 原生平面角，不应把 MOT 动作作为定量结论。",
-        "camera_note": camera_note,
+        rank = BODY_RANKS["shoulder"]
+        motion_rank = 2
+        label = f"{side}肩关节内旋/外旋角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}肩关节旋转角时间序列。"
+    elif "elbow_flex" in lower:
+        rank = BODY_RANKS["elbow"]
+        motion_rank = 0
+        label = f"{side}肘关节屈曲/伸展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}肘关节屈曲/伸展角时间序列。"
+    elif "pro_sup" in lower:
+        rank = BODY_RANKS["forearm"]
+        motion_rank = 2
+        label = f"{side}前臂旋前/旋后角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}前臂旋前/旋后角时间序列。"
+    elif "wrist_flex" in lower:
+        rank = BODY_RANKS["wrist"]
+        motion_rank = 0
+        label = f"{side}腕关节屈曲/伸展角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}腕关节屈曲/伸展角时间序列。"
+    elif "wrist_dev" in lower:
+        rank = BODY_RANKS["wrist"]
+        motion_rank = 1
+        label = f"{side}腕关节桡偏/尺偏角（OpenSim IK）"
+        desc = f"该列是 OpenSim IK 估计的{side}腕关节桡偏/尺偏角时间序列。"
+    elif lower.endswith(("_tx", "_ty", "_tz")):
+        is_angle = False
+        is_auxiliary = True
+        unit = "m"
+        motion_rank = 3
+        label = "OpenSim 平移辅助坐标（非关节活动度）"
+        desc = "该列是 OpenSim 平移坐标，不是关节角，也不应作为关节 ROM 解读。"
+
+    return _metric_payload(
+        display,
+        source=source,
+        unit=unit,
+        is_angle=is_angle,
+        is_auxiliary=is_auxiliary,
+        body_region_rank=rank,
+        side_rank=side_rank,
+        motion_rank=motion_rank,
+        action_label=label,
+        description=desc,
+        interpretation=interp,
+        camera_note=camera_note,
+    )
+
+
+def _segment_label(lower: str) -> str:
+    labels = {
+        "foot": "足部节段",
+        "shank": "小腿节段",
+        "thigh": "大腿节段",
+        "pelvis": "骨盆节段",
+        "trunk": "躯干节段",
+        "shoulders": "肩带节段",
+        "head": "头部节段",
+        "forearm": "前臂节段",
+        "arm": "上臂节段",
     }
+    for key, value in labels.items():
+        if key in lower:
+            return value
+    return "身体节段"
+
+
+def _body_rank_from_lower(lower: str) -> int:
+    for key in sorted(BODY_RANKS, key=len, reverse=True):
+        if key in lower:
+            return BODY_RANKS[key]
+    return 110
 
 
 def _camera_plane_note(quality: dict[str, Any] | None) -> str:
@@ -799,8 +1070,10 @@ def _motion_payload(path: Path, df: pd.DataFrame, quality: dict[str, Any] | None
 def _motion_figure(payload: dict[str, Any]) -> go.Figure:
     df = payload["df"]
     fig = go.Figure()
-    for column in df.columns:
-        if column == "time":
+    plotted_stats = [stat for stat in payload.get("stats", []) if stat.get("is_plottable")]
+    for stat in plotted_stats:
+        column = stat["angle"]
+        if column not in df.columns:
             continue
         meta = measure_metadata(column, payload)
         fig.add_trace(
@@ -812,6 +1085,16 @@ def _motion_figure(payload: dict[str, Any]) -> go.Figure:
                 hovertemplate="%{y:.2f}°<extra>%{fullData.name}</extra>",
                 customdata=[[meta["movement_label"]] for _ in range(len(df))],
             )
+        )
+    if not plotted_stats:
+        fig.add_annotation(
+            text="当前文件未包含可作为角度曲线展示的核心角度指标。",
+            showarrow=False,
+            x=0.5,
+            y=0.5,
+            xref="paper",
+            yref="paper",
+            font={"size": 14, "color": "#5f6b7a"},
         )
     fig.update_layout(
         template="plotly_white",
@@ -833,12 +1116,14 @@ def _stats_table_html(stats: pd.DataFrame) -> str:
     headers = [
         "Metric",
         "动作含义",
-        "Min (deg)",
+        "类型",
+        "Unit",
+        "Min",
         "Time@Min (s)",
-        "Max (deg)",
+        "Max",
         "Time@Max (s)",
-        "Mean (deg)",
-        "ROM (deg)",
+        "Mean",
+        "ROM (deg) / Range",
     ]
     rows = [
         "<div class='table-wrap'><table class='stats-table'><thead><tr>"
@@ -856,13 +1141,15 @@ def _stats_table_html(stats: pd.DataFrame) -> str:
         )
         cells = [
             metric,
-            html.escape(str(row["movement_label"])),
+            html.escape(str(row.get("action_label", row["movement_label"]))),
+            html.escape("辅助数据" if bool(row.get("is_auxiliary")) else "角度指标" if bool(row.get("is_angle", True)) else "非角度指标"),
+            html.escape(str(row.get("unit", "deg"))),
             html.escape(str(row["min"])),
             html.escape(str(row["time_at_min"])),
             html.escape(str(row["max"])),
             html.escape(str(row["time_at_max"])),
             html.escape(str(row["mean"])),
-            html.escape(str(row["rom"])),
+            html.escape(f"{row.get('range_label', 'ROM')}: {row['rom']}"),
         ]
         rows.append(
             "<tr>"
@@ -895,14 +1182,12 @@ def _quality_summary_html(quality: dict[str, Any]) -> str:
         summary = "未发现明确质量警告。仍建议先核对处理后视频中的 2D 骨架稳定性和拍摄方向。"
     return (
         "<div class='quality-summary' aria-label='质量诊断与解释边界摘要'>"
-        "<div class='quality-summary-row'>"
-        "<div>"
-        "<strong>质量诊断与解释边界</strong><br>"
+        "<div class='quality-summary-title'>"
+        "<strong>质量诊断与解释边界</strong>"
         f"<span class='badge {badge_class}'>{html.escape(label)}</span>"
         "</div>"
-        "<button id='openQualityDetail' class='icon-button' type='button' aria-label='查看完整质量诊断与解释边界'>i</button>"
-        "</div>"
         f"<p class='quality-summary-text'>{html.escape(summary)}</p>"
+        "<button id='openQualityDetail' class='detail-button' type='button' aria-label='查看完整质量诊断与解释边界'>查看完整诊断</button>"
         "</div>"
     )
 
@@ -1011,12 +1296,13 @@ def _records(df: pd.DataFrame) -> list[dict[str, Any]]:
 
 
 def _default_metrics(stats: list[dict[str, Any]]) -> list[str]:
+    plottable = [item for item in stats if item.get("is_plottable", True)]
     important = [
         item["angle"]
-        for item in stats
+        for item in plottable
         if any(keyword in str(item["angle"]).lower() for keyword in IMPORTANT_KEYWORDS)
     ]
-    return important[:8] if important else [item["angle"] for item in stats[:6]]
+    return important[:8] if important else [item["angle"] for item in plottable[:6]]
 
 
 def _display_measure_name(name: str) -> str:
