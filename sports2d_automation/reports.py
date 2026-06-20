@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
@@ -31,6 +32,14 @@ IMPORTANT_KEYWORDS = (
     "wrist",
     "pelvis",
     "trunk",
+    "膝",
+    "髋",
+    "踝",
+    "肩",
+    "肘",
+    "腕",
+    "骨盆",
+    "躯干",
 )
 
 REPORT_TITLE = "Sports2D 运动学分析报告"
@@ -38,6 +47,11 @@ ROM_NOTE = (
     "本报告中的 ROM（range of motion）表示当前分析时间范围内该指标的最大值减最小值，"
     "单位为度。它是本次视频片段中实际观测到的角度变化范围，不是临床或解剖学意义上的"
     "最大关节活动度，也不代表受试者的生理活动上限。"
+)
+STANDARD_ROM_NOTE = (
+    "本报告中的 ROM 使用标准化后的关节活动角 display_value 计算，表示当前分析时间范围内"
+    "该活动角的最大值减最小值，单位为度。它反映本视频片段中观测到的活动范围，"
+    "不是临床最大关节活动度。"
 )
 AUXILIARY_RANGE_NOTE = (
     "该指标不是关节活动度。Range 表示该辅助量在当前分析时间范围内的最大值减最小值，"
@@ -81,6 +95,35 @@ def read_mot(mot_path: Path) -> pd.DataFrame:
                 break
     skiprows = 0 if header_end is None else header_end + 1
     return pd.read_csv(mot_path, sep="\t", skiprows=skiprows)
+
+
+def read_trc(trc_path: Path) -> pd.DataFrame:
+    """Read an OpenSim/Sports2D TRC file into columns like RHip_X, RHip_Y, RHip_Z."""
+    lines = trc_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if len(lines) < 6:
+        return pd.DataFrame()
+    marker_cells = lines[3].split("\t")
+    markers = [cell.strip() for cell in marker_cells[2:] if cell.strip()]
+    if not markers:
+        return pd.DataFrame()
+    try:
+        data = pd.read_csv(trc_path, sep="\t", skiprows=5, header=None, engine="python")
+    except Exception:
+        return pd.DataFrame()
+    data = data.dropna(axis=1, how="all")
+    coord_count = max(0, data.shape[1] - 2)
+    marker_count = min(len(markers), coord_count // 3)
+    if marker_count <= 0:
+        return pd.DataFrame()
+    markers = markers[:marker_count]
+    columns = ["frame", "time"] + [
+        f"{marker}_{axis}" for marker in markers for axis in ("X", "Y", "Z")
+    ]
+    data = data.iloc[:, : len(columns)].copy()
+    data.columns = columns[: data.shape[1]]
+    for column in data.columns:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    return data
 
 
 def generate_reports_for_job(
@@ -201,9 +244,9 @@ def collect_quality_diagnostics(output_dir: Path, config: dict[str, Any]) -> dic
         "run_log_insights": insights,
         "video_metadata": _load_video_metadata(output_dir),
         "angle_notes": [
-            "本报告的核心结果是 Sports2D 原生 2D 视频平面角。它反映关键点在视频平面中的几何关系，不等同于三维解剖角。",
-            "当摄像机近似垂直于动作平面时，膝、髋、踝等 2D 角度可用于描述该平面内的屈伸趋势；摄像机为正面、背面或明显斜拍时，应解释为视频平面角，而不是矢状面角。",
-            "OpenSim *_ik.mot 若存在，会作为附加统计展示。只有 marker error、拍摄方向、尺度和标定均通过检查时，才建议进一步用于三维解释。",
+            "本报告的核心结果是标准化后的关节活动角。Sports2D 2D 指标优先由像素关键点重新计算，0°位用于描述视频平面内的近似中立参考，不等同于完整三维解剖测量。",
+            "当摄像机近似垂直于动作平面时，膝、髋、踝等 2D 活动角可用于描述该平面内的屈伸趋势；摄像机为正面、背面或明显斜拍时，应解释为视频平面投影活动角，而不是矢状面关节角。",
+            "OpenSim *_ik.mot 若存在，仅将旋转类 coordinate 整理为关节活动角展示。只有 marker error、拍摄方向、尺度和标定均通过检查时，才建议进一步用于三维解释；平移和辅助约束数据不作为关节活动度。",
         ],
     }
 
@@ -336,7 +379,7 @@ def write_html_report(
       <p class="note">请先确认处理后视频中的 2D 骨架是否稳定、是否跟随同一名受试者、左右方向是否符合实际。若视频叠加骨架已经错误，角度曲线不应继续用于结论。</p>
     </section>
     <section>
-      <h2>角度曲线</h2>
+      <h2>关节活动角曲线</h2>
       <div id="motionTabs" class="tabs"></div>
       <div id="anglePlot" class="plot"></div>
     </section>
@@ -349,6 +392,11 @@ def write_html_report(
     <section class="full">
       <h2>完整统计表</h2>
       <div id="statsTable"></div>
+    </section>
+    <section id="auxiliarySection" class="full" hidden>
+      <h2>高级诊断附录</h2>
+      <p class="note">本附录列出未进入主报告的平移坐标或辅助约束数据。它们可用于排查 OpenSim 求解质量，但不属于关节活动度，也不应作为训练或康复结论的主指标。</p>
+      <div id="auxiliaryTable"></div>
     </section>
   </main>
   <div id="qualityModal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="qualityModalTitle">
@@ -380,6 +428,8 @@ def write_html_report(
     const controls = document.getElementById('metricControls');
     const cards = document.getElementById('metricCards');
     const statsTable = document.getElementById('statsTable');
+    const auxiliarySection = document.getElementById('auxiliarySection');
+    const auxiliaryTable = document.getElementById('auxiliaryTable');
     const metricModal = document.getElementById('metricModal');
     const metricModalTitle = document.getElementById('metricModalTitle');
     const metricModalContent = document.getElementById('metricModalContent');
@@ -411,6 +461,9 @@ def write_html_report(
       renderMetricControls(index);
       renderMetricCards(index);
       statsTable.innerHTML = motionPayload[index].stats_html;
+      const auxiliaryHtml = motionPayload[index].auxiliary_stats_html || '';
+      auxiliaryTable.innerHTML = auxiliaryHtml;
+      auxiliarySection.hidden = !auxiliaryHtml;
       plot.on('plotly_hover', event => {{
         const x = event.points && event.points[0] ? Number(event.points[0].x) : NaN;
         if (video && Number.isFinite(x)) video.currentTime = Math.max(0, x);
@@ -471,7 +524,8 @@ def write_html_report(
     }}
 
     function findStat(angle) {{
-      return (motionPayload[currentIndex].stats || []).find(stat => stat.angle === angle);
+      return [...(motionPayload[currentIndex].stats || []), ...(motionPayload[currentIndex].auxiliary_stats || [])]
+        .find(stat => stat.angle === angle);
     }}
 
     function openModal(modal) {{
@@ -493,6 +547,10 @@ def write_html_report(
           <dt>动作含义</dt><dd>${{escapeHtml(stat.movement_label)}}</dd>
           <dt>数据来源</dt><dd>${{escapeHtml(stat.source || stat.kind)}}。${{escapeHtml(stat.kind_note || '')}}</dd>
           <dt>指标类型</dt><dd>${{stat.is_auxiliary ? '辅助数据，不作为核心活动度指标' : (stat.is_angle ? '角度指标' : '非角度指标')}}；单位：${{escapeHtml(stat.unit || 'deg')}}</dd>
+          <dt>原始来源</dt><dd>${{escapeHtml(stat.technical_source || stat.raw_metric || '')}}</dd>
+          <dt>运动平面</dt><dd>${{escapeHtml(stat.movement_plane || '')}}</dd>
+          <dt>0°位/中立位</dt><dd>${{escapeHtml(stat.neutral_definition || '未提供中立位定义。')}}</dd>
+          <dt>数值方向</dt><dd>${{escapeHtml(stat.direction_definition || '未提供数值方向定义。')}}</dd>
           <dt>计算定义</dt><dd>${{escapeHtml(stat.description)}}</dd>
           <dt>解释边界</dt><dd>${{escapeHtml(stat.interpretation)}}</dd>
           <dt>拍摄平面提示</dt><dd>${{escapeHtml(stat.camera_note)}}</dd>
@@ -519,6 +577,10 @@ def write_html_report(
       if (info) openMetricModal(findStat(info.dataset.angle));
     }});
     statsTable.addEventListener('click', event => {{
+      const info = event.target.closest('button.metric-info');
+      if (info) openMetricModal(findStat(info.dataset.angle));
+    }});
+    auxiliaryTable.addEventListener('click', event => {{
       const info = event.target.closest('button.metric-info');
       if (info) openMetricModal(findStat(info.dataset.angle));
     }});
@@ -593,6 +655,7 @@ def angle_statistics(
     kind: dict[str, str] | None = None,
     quality: dict[str, Any] | None = None,
     report_details: bool = False,
+    metric_metadata: dict[str, dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
     rows = []
     if "time" not in df.columns:
@@ -607,9 +670,11 @@ def angle_statistics(
             continue
         min_idx = series.idxmin()
         max_idx = series.idxmax()
-        meta = measure_metadata(column, kind, camera_note)
+        explicit_meta = (metric_metadata or {}).get(column)
+        meta = explicit_meta or measure_metadata(column, kind, camera_note)
+        display_metric = str(meta.get("display_metric") or column) if explicit_meta else column
         row = {
-            "angle": column,
+            "angle": display_metric,
             "display_name": meta["display_name"],
             "kind_short": kind["kind_short"],
             "movement_label": meta["movement_label"],
@@ -644,9 +709,20 @@ def angle_statistics(
                     "motion_rank": meta["motion_rank"],
                     "action_label": meta["action_label"],
                     "explanation": meta["explanation"],
-                    "range_label": "ROM" if meta["is_angle"] and not meta["is_auxiliary"] else "Range",
+                    "raw_metric": meta.get("raw_metric", column),
+                    "display_metric": display_metric,
+                    "movement_plane": meta.get("movement_plane", ""),
+                    "neutral_definition": meta.get("neutral_definition", ""),
+                    "direction_definition": meta.get("direction_definition", ""),
+                    "technical_source": meta.get("technical_source", meta["source"]),
+                    "is_primary_rom_metric": bool(meta.get("is_primary_rom_metric", meta["is_angle"] and not meta["is_auxiliary"])),
+                    "range_label": "ROM"
+                    if bool(meta.get("is_primary_rom_metric", meta["is_angle"] and not meta["is_auxiliary"]))
+                    else "Range",
                     "camera_note": meta["camera_note"],
-                    "rom_note": ROM_NOTE if meta["is_angle"] and not meta["is_auxiliary"] else AUXILIARY_RANGE_NOTE,
+                    "rom_note": STANDARD_ROM_NOTE
+                    if bool(meta.get("is_primary_rom_metric", meta["is_angle"] and not meta["is_auxiliary"]))
+                    else AUXILIARY_RANGE_NOTE,
                 }
             )
         rows.append(row)
@@ -661,14 +737,14 @@ def classify_motion_file(path: Path) -> dict[str, str]:
     stem = path.stem.lower()
     if stem.endswith("_ik") or "_ik" in stem:
         return {
-            "kind_short": "OpenSim IK 关节角（高级）",
-            "kind": "OpenSim IK 关节角（高级）",
+            "kind_short": "OpenSim IK 关节活动角（高级）",
+            "kind": "OpenSim IK 关节活动角（高级）",
             "kind_note": "这是 OpenSim 逆运动学输出。旋转类 coordinate 按关节角时间序列解释；平移和辅助约束列仅作为高级诊断数据，不代表关节活动度。",
         }
     return {
-        "kind_short": "Sports2D 2D 平面角",
-        "kind": "Sports2D 2D 视频平面角",
-        "kind_note": "这是由视频平面关键点计算的 2D 角度，不是完整三维解剖角。",
+        "kind_short": "Sports2D 2D 平面活动角",
+        "kind": "Sports2D 2D 平面活动角",
+        "kind_note": "这是由视频平面关键点计算或整理的 2D 活动角，不是完整三维解剖角。",
     }
 
 
@@ -676,7 +752,7 @@ def measure_metadata(
     name: str,
     kind: dict[str, str],
     camera_note: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     display = name.strip()
     lower = name.lower()
     camera_note = camera_note or kind.get("camera_note") or _camera_plane_note(None)
@@ -707,9 +783,19 @@ def _metric_payload(
     description: str,
     interpretation: str,
     camera_note: str,
+    raw_metric: str | None = None,
+    display_metric: str | None = None,
+    movement_plane: str = "",
+    neutral_definition: str = "",
+    direction_definition: str = "",
+    technical_source: str = "",
+    is_primary_rom_metric: bool | None = None,
 ) -> dict[str, Any]:
+    primary = bool(is_angle and not is_auxiliary) if is_primary_rom_metric is None else is_primary_rom_metric
     return {
         "display_name": display,
+        "raw_metric": raw_metric or display,
+        "display_metric": display_metric or display,
         "movement_label": action_label,
         "action_label": action_label,
         "description": description,
@@ -724,6 +810,11 @@ def _metric_payload(
         "side_rank": side_rank,
         "motion_rank": motion_rank,
         "camera_note": camera_note,
+        "movement_plane": movement_plane,
+        "neutral_definition": neutral_definition,
+        "direction_definition": direction_definition,
+        "technical_source": technical_source or source,
+        "is_primary_rom_metric": bool(primary),
     }
 
 
@@ -784,6 +875,12 @@ def _sports2d_measure_metadata(name: str, display: str, lower: str, camera_note:
         description=desc,
         interpretation=interp,
         camera_note=camera_note,
+        raw_metric=name,
+        display_metric=label,
+        movement_plane="视频平面",
+        neutral_definition="未标准化：该指标来自 Sports2D 原始 .mot 平面角，未能从关键点几何重新定义 0°中立位。",
+        direction_definition="数值方向沿用 Sports2D 原始输出；除非已在报告中标注为标准化 2D 活动角，否则不应直接解释为关节活动度。",
+        technical_source=f"Sports2D 原始 MOT 列：{name}",
     )
 
 
@@ -797,7 +894,7 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
     motion_rank = 8
     label = "OpenSim IK 角度"
     desc = "该列来自 OpenSim 逆运动学 MOT 文件。旋转类 coordinate 在本报告中按关节角时间序列解释。"
-    interp = "只有当 marker error、人体尺度、拍摄方向、标定和模型匹配均合理时，才建议进一步按三维关节角解释。若质量诊断提示异常，应优先信任处理后视频中的 2D 骨架和 Sports2D 原生平面角。"
+    interp = "只有当 marker error、人体尺度、拍摄方向、标定和模型匹配均合理时，才建议进一步按三维关节角解释。若质量诊断提示异常，应优先查看处理后视频中的 2D 骨架，并以 Sports2D 2D 平面活动角作为主报告结果。"
 
     if lower in {"pelvis_tx", "pelvis_ty", "pelvis_tz"}:
         axis = {"pelvis_tx": "前后", "pelvis_ty": "上下", "pelvis_tz": "左右"}[lower]
@@ -816,7 +913,7 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
             "pelvis_rotation": ("骨盆轴向旋转角", 2),
         }
         label, motion_rank = mapping[lower]
-        desc = f"该列是 OpenSim IK 估计的{label}时间序列，反映骨盆相对模型坐标系的旋转姿态。"
+        desc = f"该列是 OpenSim IK 估计的{label}时间序列，反映骨盆相对 OpenSim 参考坐标系的旋转姿态。"
     elif "hip_flexion" in lower:
         rank = BODY_RANKS["hip"]
         motion_rank = 0
@@ -943,6 +1040,10 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
         label = "OpenSim 平移辅助坐标（非关节活动度）"
         desc = "该列是 OpenSim 平移坐标，不是关节角，也不应作为关节 ROM 解读。"
 
+    movement_plane = _opensim_movement_plane(lower)
+    neutral_definition, direction_definition = _opensim_neutral_direction(
+        lower, is_angle=is_angle, is_auxiliary=is_auxiliary
+    )
     return _metric_payload(
         display,
         source=source,
@@ -956,6 +1057,112 @@ def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: 
         description=desc,
         interpretation=interp,
         camera_note=camera_note,
+        raw_metric=name,
+        display_metric=label,
+        movement_plane=movement_plane,
+        neutral_definition=neutral_definition,
+        direction_definition=direction_definition,
+        technical_source=f"OpenSim IK MOT coordinate：{name}",
+        is_primary_rom_metric=bool(is_angle and not is_auxiliary),
+    )
+
+
+def _opensim_movement_plane(lower: str) -> str:
+    if any(token in lower for token in ["flexion", "knee_angle", "ankle_angle", "mtp_angle", "flex_ext", "arm_flex", "elbow_flex", "wrist_flex", "pelvis_tilt", "neck_flexion"]):
+        return "OpenSim 矢状面/屈伸方向"
+    if any(token in lower for token in ["adduction", "list", "lat_bending", "arm_add", "wrist_dev", "subtalar"]):
+        return "OpenSim 额状面/内外侧方向"
+    if any(token in lower for token in ["rotation", "axial_rotation", "arm_rot", "pro_sup"]):
+        return "OpenSim 水平面/轴向旋转方向"
+    if lower.endswith(("_tx", "_ty", "_tz")) or lower.startswith("abs_t"):
+        return "OpenSim 平移辅助坐标"
+    return "OpenSim 未分类旋转方向"
+
+
+def _opensim_neutral_direction(
+    lower: str,
+    *,
+    is_angle: bool,
+    is_auxiliary: bool,
+) -> tuple[str, str]:
+    if not is_angle or lower.endswith(("_tx", "_ty", "_tz")) or lower.startswith("abs_t"):
+        return (
+            "不适用。该指标为平移或辅助量，不定义关节 0°中立位。",
+            "数值增大表示 OpenSim 原始坐标对应方向的平移增加，不代表关节活动角增大。",
+        )
+    if is_auxiliary:
+        return (
+            "不作为主报告关节中立位解释。该指标属于 OpenSim 模型求解或约束相关辅助坐标。",
+            "数值方向沿用 OpenSim 原始坐标定义，不建议作为临床或训练反馈指标。",
+        )
+    if "knee_angle" in lower:
+        return (
+            "0°通常接近 OpenSim 模型中的膝关节伸直位。",
+            "数值增大通常表示膝关节屈曲增加；数值减小表示更接近伸直或相对伸展。",
+        )
+    if "hip_flexion" in lower:
+        return (
+            "0°对应 OpenSim 模型髋关节屈伸坐标的解剖中立位。",
+            "数值增大通常表示髋屈曲增加；数值减小或负值通常表示相对伸展。",
+        )
+    if "hip_adduction" in lower:
+        return (
+            "0°对应 OpenSim 模型髋关节额状面中立位。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述髋内收/外展方向的偏移。",
+        )
+    if "hip_rotation" in lower:
+        return (
+            "0°对应 OpenSim 模型髋关节轴向旋转中立位。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述髋内旋/外旋方向的偏移。",
+        )
+    if "ankle_angle" in lower:
+        return (
+            "0°通常接近 OpenSim 模型踝关节中立位。",
+            "数值增大通常表示背屈增加；数值减小或负值通常表示跖屈增加。",
+        )
+    if "subtalar_angle" in lower:
+        return (
+            "0°对应 OpenSim 模型距下关节中立位。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述足部内翻/外翻方向的偏移。",
+        )
+    if "mtp_angle" in lower:
+        return (
+            "0°对应 OpenSim 模型跖趾关节中立位。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述跖趾屈曲/伸展方向的偏移。",
+        )
+    if "pelvis_tilt" in lower:
+        return (
+            "0°对应 OpenSim 模型骨盆前后倾坐标的参考中立姿态。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述骨盆前倾/后倾姿态变化。",
+        )
+    if "pelvis_list" in lower:
+        return (
+            "0°对应 OpenSim 模型骨盆左右倾斜坐标的参考中立姿态。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述骨盆向左或向右倾斜。",
+        )
+    if "pelvis_rotation" in lower:
+        return (
+            "0°对应 OpenSim 模型骨盆轴向旋转坐标的参考中立姿态。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述骨盆向左或向右旋转。",
+        )
+    if any(token in lower for token in ["flex_ext", "neck_flexion", "arm_flex", "elbow_flex", "wrist_flex"]):
+        return (
+            "0°对应 OpenSim 模型该关节或节段屈伸坐标的中立位。",
+            "数值增大通常表示屈曲方向增加；数值减小通常表示伸展方向增加或更接近中立位。",
+        )
+    if any(token in lower for token in ["lat_bending", "neck_bending", "arm_add", "wrist_dev"]):
+        return (
+            "0°对应 OpenSim 模型该关节或节段内外侧方向的中立位。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述侧屈、内收/外展或桡偏/尺偏方向的偏移。",
+        )
+    if any(token in lower for token in ["axial_rotation", "neck_rotation", "arm_rot", "pro_sup"]):
+        return (
+            "0°对应 OpenSim 模型该关节或节段轴向旋转坐标的中立位。",
+            "数值正负方向沿用 OpenSim 原始坐标定义，用于描述内外旋、旋前/旋后或轴向旋转方向的偏移。",
+        )
+    return (
+        "0°按 OpenSim 模型该旋转坐标的中立位定义。",
+        "数值方向沿用 OpenSim 原始坐标定义；解释时应结合模型文档、质量诊断和处理后视频复核。",
     )
 
 
@@ -1032,6 +1239,309 @@ def _load_motion_files(sports_dir: Path) -> list[tuple[Path, pd.DataFrame]]:
     return motions
 
 
+def _standardize_report_motion(
+    path: Path,
+    df: pd.DataFrame,
+    kind: dict[str, Any],
+    quality: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if str(kind["kind_short"]).startswith("OpenSim IK"):
+        return _standardize_ik_motion(path, df, kind, quality)
+    trc_path = _find_px_trc_for_motion(path)
+    if trc_path is not None:
+        trc_df = read_trc(trc_path)
+        standardized = _standardize_2d_from_trc(trc_path, trc_df, quality)
+        if standardized is not None:
+            return standardized
+    return _standardize_raw_2d_fallback(path, df, kind, quality)
+
+
+def _standardize_ik_motion(
+    path: Path,
+    df: pd.DataFrame,
+    kind: dict[str, Any],
+    quality: dict[str, Any] | None,
+) -> dict[str, Any]:
+    camera_note = _camera_plane_note(quality)
+    source_kind = {
+        **kind,
+        "kind_short": "OpenSim IK 关节活动角（高级）",
+        "kind": "OpenSim IK 关节活动角（高级）",
+        "kind_note": (
+            "OpenSim IK 旋转类 coordinate 已按关节活动角展示；平移和辅助约束坐标不进入主曲线，"
+            "仅保留在高级诊断附录中。IK 结果的可信度必须结合 marker error、拍摄方向、尺度和模型匹配情况判断。"
+        ),
+        "camera_note": camera_note,
+    }
+    display = pd.DataFrame({"time": pd.to_numeric(df["time"], errors="coerce")})
+    metric_metadata: dict[str, dict[str, Any]] = {}
+    auxiliary = pd.DataFrame({"time": display["time"]})
+    auxiliary_metadata: dict[str, dict[str, Any]] = {}
+
+    for column in df.columns:
+        if column == "time":
+            continue
+        meta = measure_metadata(column, source_kind, camera_note)
+        values = pd.to_numeric(df[column], errors="coerce")
+        if meta.get("is_primary_rom_metric") and meta.get("is_plottable"):
+            metric_name = _unique_column_name(display, str(meta["display_metric"]))
+            display[metric_name] = values
+            metric_metadata[metric_name] = {**meta, "display_metric": metric_name, "display_name": metric_name}
+        else:
+            auxiliary[column] = values
+            auxiliary_metadata[column] = {
+                **meta,
+                "display_metric": column,
+                "display_name": column,
+                "is_plottable": False,
+            }
+
+    auxiliary_stats = angle_statistics(
+        auxiliary,
+        source_kind,
+        quality,
+        report_details=True,
+        metric_metadata=auxiliary_metadata,
+    )
+    return {
+        "df": display,
+        "kind": source_kind,
+        "metric_metadata": metric_metadata,
+        "auxiliary_stats": auxiliary_stats,
+        "source_note": f"OpenSim IK MOT：{path.name}",
+    }
+
+
+def _standardize_raw_2d_fallback(
+    path: Path,
+    df: pd.DataFrame,
+    kind: dict[str, Any],
+    quality: dict[str, Any] | None,
+) -> dict[str, Any]:
+    camera_note = _camera_plane_note(quality)
+    fallback_kind = {
+        **kind,
+        "kind_short": "Sports2D 2D 原始平面角（未标准化）",
+        "kind": "Sports2D 2D 原始平面角（未标准化）",
+        "kind_note": (
+            "未找到可用于重新计算活动角的像素 TRC 文件，因此本标签保留 Sports2D 原始 .mot 平面角。"
+            "这些值未统一为 0°中立位，不建议直接解释为关节活动度。"
+        ),
+        "camera_note": camera_note,
+    }
+    display = df.copy()
+    for column in display.columns:
+        display[column] = pd.to_numeric(display[column], errors="coerce")
+    metadata: dict[str, dict[str, Any]] = {}
+    for column in display.columns:
+        if column == "time":
+            continue
+        meta = measure_metadata(column, fallback_kind, camera_note)
+        metadata[column] = {
+            **meta,
+            "raw_metric": column,
+            "display_metric": column,
+            "source": "Sports2D 原始 2D 平面角（未标准化）",
+            "technical_source": f"Sports2D 原始 MOT 列：{column}",
+            "neutral_definition": "未标准化：缺少对应 px TRC，无法可靠给出 0°中立位。",
+            "direction_definition": "数值方向沿用 Sports2D 原始输出；请勿直接解读为关节活动度。",
+            "is_primary_rom_metric": True,
+        }
+    auxiliary_stats = pd.DataFrame()
+    return {
+        "df": display,
+        "kind": fallback_kind,
+        "metric_metadata": metadata,
+        "auxiliary_stats": auxiliary_stats,
+        "source_note": f"Sports2D 原始 MOT：{path.name}",
+    }
+
+
+def _standardize_2d_from_trc(
+    trc_path: Path,
+    trc_df: pd.DataFrame,
+    quality: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if trc_df.empty or "time" not in trc_df.columns:
+        return None
+    camera_note = _camera_plane_note(quality)
+    kind = {
+        "kind_short": "Sports2D 2D 平面活动角",
+        "kind": "Sports2D 2D 平面活动角",
+        "kind_note": (
+            "这些指标由 Sports2D 像素 TRC 关键点重新计算，并统一为视频平面内的关节活动角。"
+            "2D 中立位服务于视频平面解释，不等同于完整三维解剖测量。"
+        ),
+        "camera_note": camera_note,
+    }
+    display = pd.DataFrame({"time": pd.to_numeric(trc_df["time"], errors="coerce")})
+    metadata: dict[str, dict[str, Any]] = {}
+
+    def add_metric(
+        column_name: str,
+        series: pd.Series,
+        *,
+        side: str,
+        body_key: str,
+        motion_rank: int,
+        raw_metric: str,
+        action_label: str,
+        description: str,
+        neutral_definition: str,
+        direction_definition: str,
+        movement_plane: str = "视频平面",
+    ) -> None:
+        values = pd.to_numeric(series, errors="coerce")
+        if values.dropna().empty:
+            return
+        display[column_name] = values
+        metadata[column_name] = _metric_payload(
+            column_name,
+            source="Sports2D 2D TRC 关键点几何",
+            unit="deg",
+            is_angle=True,
+            is_auxiliary=False,
+            body_region_rank=BODY_RANKS.get(body_key, 110),
+            side_rank=0 if side == "左侧" else 1 if side == "右侧" else 2,
+            motion_rank=motion_rank,
+            action_label=action_label,
+            description=description,
+            interpretation=(
+                "该指标是单目视频平面内的二维近似，适合观察当前拍摄平面中的相对变化趋势；"
+                "当存在明显斜拍、遮挡、转体或出平面运动时，不应解释为完整三维关节角。"
+            ),
+            camera_note=camera_note,
+            raw_metric=raw_metric,
+            display_metric=column_name,
+            movement_plane=movement_plane,
+            neutral_definition=neutral_definition,
+            direction_definition=direction_definition,
+            technical_source=f"Sports2D 像素 TRC：{trc_path.name}；关键点：{raw_metric}",
+            is_primary_rom_metric=True,
+        )
+
+    for prefix, side in [("L", "左侧"), ("R", "右侧")]:
+        side_text = side
+        knee = _included_angle_2d(trc_df, f"{prefix}Hip", f"{prefix}Knee", f"{prefix}Ankle")
+        add_metric(
+            f"{side_text}膝关节屈曲角（2D）",
+            180.0 - knee,
+            side=side_text,
+            body_key="knee",
+            motion_rank=0,
+            raw_metric=f"{prefix}Hip-{prefix}Knee-{prefix}Ankle",
+            action_label=f"{side_text}膝关节屈曲/伸展活动角（2D）",
+            description="由髋、膝、踝三个二维关键点计算膝关节夹角，并换算为 0°接近伸直、数值增大表示屈曲增加的活动角。",
+            neutral_definition="0°近似表示视频平面内髋-膝-踝三点接近共线的膝伸直位。",
+            direction_definition="数值增大表示膝关节在视频平面内屈曲增加；数值减小表示更接近伸直。",
+        )
+
+        hip = _included_angle_2d(trc_df, f"{prefix}Shoulder", f"{prefix}Hip", f"{prefix}Knee")
+        add_metric(
+            f"{side_text}髋关节屈曲角（2D）",
+            180.0 - hip,
+            side=side_text,
+            body_key="hip",
+            motion_rank=0,
+            raw_metric=f"{prefix}Shoulder-{prefix}Hip-{prefix}Knee",
+            action_label=f"{side_text}髋关节屈曲/伸展活动角（2D）",
+            description="由肩、髋、膝三个二维关键点估计躯干与大腿之间的平面夹角，并换算为相对伸直/中立位的屈曲活动角。",
+            neutral_definition="0°近似表示视频平面内躯干与大腿方向接近共线的髋伸直参考位。",
+            direction_definition="数值增大表示髋关节在视频平面内屈曲增加；数值减小表示更接近伸展参考位。",
+        )
+
+        elbow = _included_angle_2d(trc_df, f"{prefix}Shoulder", f"{prefix}Elbow", f"{prefix}Wrist")
+        add_metric(
+            f"{side_text}肘关节屈曲角（2D）",
+            180.0 - elbow,
+            side=side_text,
+            body_key="elbow",
+            motion_rank=0,
+            raw_metric=f"{prefix}Shoulder-{prefix}Elbow-{prefix}Wrist",
+            action_label=f"{side_text}肘关节屈曲/伸展活动角（2D）",
+            description="由肩、肘、腕三个二维关键点计算肘关节夹角，并换算为 0°接近伸直、数值增大表示屈曲增加的活动角。",
+            neutral_definition="0°近似表示视频平面内肩-肘-腕三点接近共线的肘伸直位。",
+            direction_definition="数值增大表示肘关节在视频平面内屈曲增加；数值减小表示更接近伸直。",
+        )
+
+        shoulder = _included_angle_2d(trc_df, f"{prefix}Hip", f"{prefix}Shoulder", f"{prefix}Elbow")
+        add_metric(
+            f"{side_text}肩关节平面抬高角（2D）",
+            shoulder,
+            side=side_text,
+            body_key="shoulder",
+            motion_rank=0,
+            raw_metric=f"{prefix}Hip-{prefix}Shoulder-{prefix}Elbow",
+            action_label=f"{side_text}肩关节平面抬高活动角（2D）",
+            description="由髋、肩、肘三个二维关键点估计上臂相对躯干的画面内夹角，用于描述当前视频平面中的肩部抬高趋势。",
+            neutral_definition="0°近似表示上臂沿躯干方向下垂或接近躯干轴线；该中立位会受躯干姿态和拍摄平面影响。",
+            direction_definition="数值增大表示上臂在视频平面内相对躯干抬高增加；不能单独区分三维屈曲、外展和旋转。",
+        )
+
+        ankle = _included_angle_2d(trc_df, f"{prefix}Knee", f"{prefix}Ankle", f"{prefix}BigToe")
+        add_metric(
+            f"{side_text}踝关节相对中立位偏移角（2D）",
+            (ankle - 90.0).abs(),
+            side=side_text,
+            body_key="ankle",
+            motion_rank=0,
+            raw_metric=f"{prefix}Knee-{prefix}Ankle-{prefix}BigToe",
+            action_label=f"{side_text}踝关节相对中立位偏移角（2D）",
+            description="由膝、踝、大脚趾三个二维关键点估计小腿与足部的夹角，并显示相对 90°参考位的绝对偏移量。",
+            neutral_definition="0°表示视频平面内小腿与足部近似垂直于 90°参考位；这只是二维几何参考，不是临床踝中立位。",
+            direction_definition="数值增大表示踝部相对参考位的偏移增大；单目二维数据无法稳定区分背屈与跖屈方向。",
+        )
+
+    if len(display.columns) <= 1:
+        return None
+    return {
+        "df": display,
+        "kind": kind,
+        "metric_metadata": metadata,
+        "auxiliary_stats": pd.DataFrame(),
+        "source_note": f"Sports2D 像素 TRC：{trc_path.name}",
+    }
+
+
+def _included_angle_2d(trc_df: pd.DataFrame, proximal: str, joint: str, distal: str) -> pd.Series:
+    required = [f"{marker}_{axis}" for marker in (proximal, joint, distal) for axis in ("X", "Y")]
+    if any(column not in trc_df.columns for column in required):
+        return pd.Series(index=trc_df.index, dtype=float)
+    p1 = trc_df[[f"{proximal}_X", f"{proximal}_Y"]].astype(float).to_numpy()
+    p2 = trc_df[[f"{joint}_X", f"{joint}_Y"]].astype(float).to_numpy()
+    p3 = trc_df[[f"{distal}_X", f"{distal}_Y"]].astype(float).to_numpy()
+    v1 = p1 - p2
+    v2 = p3 - p2
+    numerator = np.sum(v1 * v2, axis=1)
+    denominator = np.linalg.norm(v1, axis=1) * np.linalg.norm(v2, axis=1)
+    cosines = np.divide(
+        numerator,
+        denominator,
+        out=np.full_like(numerator, np.nan, dtype=float),
+        where=denominator > 0,
+    )
+    angles = np.degrees(np.arccos(np.clip(cosines, -1.0, 1.0)))
+    return pd.Series(angles, index=trc_df.index)
+
+
+def _find_px_trc_for_motion(path: Path) -> Path | None:
+    person_match = re.search(r"person(\d+)", path.stem, re.I)
+    candidates: list[Path] = []
+    if person_match:
+        candidates.extend(sorted(path.parent.glob(f"*px_person{person_match.group(1)}.trc")))
+    candidates.extend(sorted(path.parent.glob("*_px_person*.trc")))
+    return candidates[0] if candidates else None
+
+
+def _unique_column_name(df: pd.DataFrame, preferred: str) -> str:
+    if preferred not in df.columns:
+        return preferred
+    index = 2
+    while f"{preferred} ({index})" in df.columns:
+        index += 1
+    return f"{preferred} ({index})"
+
+
 def _prepare_report_video(sports_dir: Path, log: LogCallback | None) -> Path | None:
     raw_video = sports_dir / f"{sports_dir.name}.mp4"
     if not raw_video.exists():
@@ -1053,17 +1563,32 @@ def _motion_payload(path: Path, df: pd.DataFrame, quality: dict[str, Any] | None
     kind = classify_motion_file(path)
     camera_note = _camera_plane_note(quality)
     kind["camera_note"] = camera_note
-    stats = angle_statistics(safe, kind, quality, report_details=True)
+    standardized = _standardize_report_motion(path, safe, kind, quality)
+    report_df = standardized["df"]
+    report_kind = standardized["kind"]
+    stats = angle_statistics(
+        report_df,
+        report_kind,
+        quality,
+        report_details=True,
+        metric_metadata=standardized.get("metric_metadata"),
+    )
     stats_records = _records(stats)
+    auxiliary_stats = standardized.get("auxiliary_stats")
+    auxiliary_stats_records = _records(auxiliary_stats) if isinstance(auxiliary_stats, pd.DataFrame) and not auxiliary_stats.empty else []
+    auxiliary_stats_html = _stats_table_html(auxiliary_stats) if auxiliary_stats_records else ""
     return {
         "name": path.stem,
-        "columns": list(safe.columns),
+        "columns": list(report_df.columns),
         "stats": stats_records,
+        "auxiliary_stats": auxiliary_stats_records,
         "stats_html": _stats_table_html(stats),
+        "auxiliary_stats_html": auxiliary_stats_html,
         "default_metrics": _default_metrics(stats_records),
-        "df": safe,
+        "df": report_df,
         "camera_note": camera_note,
-        **kind,
+        "source_note": standardized.get("source_note", ""),
+        **report_kind,
     }
 
 
@@ -1075,7 +1600,6 @@ def _motion_figure(payload: dict[str, Any]) -> go.Figure:
         column = stat["angle"]
         if column not in df.columns:
             continue
-        meta = measure_metadata(column, payload)
         fig.add_trace(
             go.Scatter(
                 x=df["time"],
@@ -1083,7 +1607,7 @@ def _motion_figure(payload: dict[str, Any]) -> go.Figure:
                 mode="lines",
                 name=column,
                 hovertemplate="%{y:.2f}°<extra>%{fullData.name}</extra>",
-                customdata=[[meta["movement_label"]] for _ in range(len(df))],
+                customdata=[[stat.get("movement_label", "")] for _ in range(len(df))],
             )
         )
     if not plotted_stats:
@@ -1101,7 +1625,7 @@ def _motion_figure(payload: dict[str, Any]) -> go.Figure:
         hovermode="x unified",
         margin={"l": 48, "r": 18, "t": 28, "b": 48},
         xaxis_title="时间 (s)",
-        yaxis_title=f"{payload['kind']} (deg)",
+        yaxis_title="关节活动角 (deg)",
         legend={"orientation": "h", "y": -0.25},
     )
     return fig

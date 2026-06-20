@@ -15,6 +15,7 @@ from sports2d_automation.reports import (
     marker_error_summary,
     measure_metadata,
     read_mot,
+    read_trc,
     write_excel_report,
     write_html_report,
 )
@@ -26,6 +27,82 @@ from sports2d_automation.video import (
     unique_job_dir,
     video_size_from_metadata,
 )
+
+
+def write_minimal_trc(path: Path) -> None:
+    markers = [
+        "RHip",
+        "RKnee",
+        "RAnkle",
+        "RBigToe",
+        "RShoulder",
+        "RElbow",
+        "RWrist",
+        "LHip",
+        "LKnee",
+        "LAnkle",
+        "LBigToe",
+        "LShoulder",
+        "LElbow",
+        "LWrist",
+    ]
+    frames = [
+        {
+            "time": 0.0,
+            "RHip": (0.0, 0.0, 0.0),
+            "RKnee": (0.0, -1.0, 0.0),
+            "RAnkle": (0.0, -2.0, 0.0),
+            "RBigToe": (1.0, -2.0, 0.0),
+            "RShoulder": (0.0, 1.0, 0.0),
+            "RElbow": (0.0, 0.0, 0.0),
+            "RWrist": (0.0, -1.0, 0.0),
+            "LHip": (2.0, 0.0, 0.0),
+            "LKnee": (2.0, -1.0, 0.0),
+            "LAnkle": (2.0, -2.0, 0.0),
+            "LBigToe": (3.0, -2.0, 0.0),
+            "LShoulder": (2.0, 1.0, 0.0),
+            "LElbow": (2.0, 0.0, 0.0),
+            "LWrist": (2.0, -1.0, 0.0),
+        },
+        {
+            "time": 1.0,
+            "RHip": (0.0, 0.0, 0.0),
+            "RKnee": (0.0, -1.0, 0.0),
+            "RAnkle": (1.0, -1.0, 0.0),
+            "RBigToe": (2.0, -1.0, 0.0),
+            "RShoulder": (0.0, 1.0, 0.0),
+            "RElbow": (1.0, 1.0, 0.0),
+            "RWrist": (1.0, 0.0, 0.0),
+            "LHip": (2.0, 0.0, 0.0),
+            "LKnee": (2.0, -1.0, 0.0),
+            "LAnkle": (3.0, -1.0, 0.0),
+            "LBigToe": (4.0, -1.0, 0.0),
+            "LShoulder": (2.0, 1.0, 0.0),
+            "LElbow": (3.0, 1.0, 0.0),
+            "LWrist": (3.0, 0.0, 0.0),
+        },
+    ]
+    marker_header = "Frame#\tTime\t" + "\t\t\t".join(markers) + "\t\t\t\n"
+    coord_header = "\t\t" + "\t".join(
+        label for index, _ in enumerate(markers, start=1) for label in (f"X{index}", f"Y{index}", f"Z{index}")
+    )
+    rows = []
+    for frame_index, frame in enumerate(frames, start=1):
+        values = [str(frame_index), f"{frame['time']:.3f}"]
+        for marker in markers:
+            values.extend(f"{value:.3f}" for value in frame[marker])
+        rows.append("\t".join(values))
+    path.write_text(
+        "PathFileType\t4\t(X/Y/Z)\ttest.trc\n"
+        "DataRate\tCameraRate\tNumFrames\tNumMarkers\tUnits\tOrigDataRate\tOrigDataStartFrame\tOrigNumFrames\n"
+        f"1\t1\t{len(frames)}\t{len(markers)}\tpx\t1\t1\t{len(frames)}\n"
+        + marker_header
+        + coord_header
+        + "\n"
+        + "\n".join(rows)
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 class CoreTests(unittest.TestCase):
@@ -104,6 +181,11 @@ class CoreTests(unittest.TestCase):
             stats = angle_statistics(df)
             self.assertEqual(set(stats["angle"]), {"Right knee", "Left knee"})
             self.assertNotIn("rom_note", stats.columns)
+            trc = root / "demo_px_person00.trc"
+            write_minimal_trc(trc)
+            trc_df = read_trc(trc)
+            self.assertIn("RKnee_X", trc_df.columns)
+            self.assertIn("RBigToe_Y", trc_df.columns)
 
             ik_mot = root / "demo_ik.mot"
             ik_df = df.assign(
@@ -128,17 +210,22 @@ class CoreTests(unittest.TestCase):
             self.assertIn("qualityModal", html_text)
             self.assertIn("metricModal", html_text)
             self.assertIn("metric-info", html_text)
-            self.assertIn("Right knee", html_text)
+            self.assertIn("关节活动角 (deg)", html_text)
+            self.assertIn("右侧膝关节屈曲角（2D）", html_text)
+            self.assertIn("0°位/中立位", html_text)
+            self.assertIn('"rom": 90.0', html_text)
+            self.assertNotIn("Right knee", html_text)
             self.assertIn("ROM (deg) / Range", html_text)
-            self.assertIn("OpenSim IK 关节角（高级）", html_text)
+            self.assertIn("OpenSim IK 关节活动角（高级）", html_text)
             self.assertIn("右侧髋关节屈曲/伸展角（OpenSim IK）", html_text)
+            self.assertIn("高级诊断附录", html_text)
             self.assertIn("骨盆前后平移（辅助数据，非关节活动度）", html_text)
             self.assertIn('"is_plottable": false', html_text)
             self.assertNotIn("OpenSim 模型坐标", html_text)
             self.assertNotIn("selected.size === 0 ||", html_text)
             self.assertIn("正面或背面视角", html_text)
             self.assertNotIn("角度定义与动作含义", html_text)
-            self.assertIn("2D 视频平面角", html_text)
+            self.assertIn("Sports2D 2D 平面活动角", html_text)
             self.assertNotIn("markerPlot", html_text)
             self.assertNotIn("三维标记视图", html_text)
 
@@ -152,22 +239,44 @@ class CoreTests(unittest.TestCase):
             )
             self.assertTrue(excel_path.exists())
 
+    def test_html_report_falls_back_when_px_trc_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            mot = root / "demo_angles_person00.mot"
+            mot.write_text(
+                "time\tRight knee\n"
+                "0.0\t10\n"
+                "1.0\t40\n",
+                encoding="utf-8",
+            )
+            html_path = root / "fallback.html"
+            write_html_report(html_path, "demo", [(mot, read_mot(mot))], None, None, {})
+            html_text = html_path.read_text(encoding="utf-8")
+            self.assertIn("Sports2D 2D 原始平面角（未标准化）", html_text)
+            self.assertIn("缺少对应 px TRC，无法可靠给出 0°中立位", html_text)
+            self.assertIn("Right knee", html_text)
+
     def test_measure_metadata_explains_2d_and_ik_angles(self) -> None:
-        sports2d = {"kind_short": "2D平面角", "kind": "Sports2D 2D 视频平面角", "kind_note": ""}
+        sports2d = {"kind_short": "Sports2D 2D 平面活动角", "kind": "Sports2D 2D 平面活动角", "kind_note": ""}
         knee = measure_metadata("Right knee", sports2d)
         self.assertIn("膝关节屈曲", knee["movement_label"])
         self.assertIn("视频平面", knee["description"] + knee["interpretation"])
-        ik = {"kind_short": "OpenSim IK 关节角（高级）", "kind": "OpenSim IK 关节角（高级）", "kind_note": ""}
+        self.assertIn("未标准化", knee["neutral_definition"])
+        ik = {"kind_short": "OpenSim IK 关节活动角（高级）", "kind": "OpenSim IK 关节活动角（高级）", "kind_note": ""}
         hip = measure_metadata("hip_flexion_r", ik)
         self.assertIn("右侧髋关节屈曲/伸展角", hip["movement_label"])
         self.assertEqual(hip["unit"], "deg")
         self.assertTrue(hip["is_plottable"])
         self.assertIn("marker error", hip["interpretation"])
+        self.assertIn("0°对应 OpenSim 模型髋关节", hip["neutral_definition"])
+        self.assertIn("髋屈曲增加", hip["direction_definition"])
+        self.assertTrue(hip["is_primary_rom_metric"])
         pelvis_tx = measure_metadata("pelvis_tx", ik)
         self.assertEqual(pelvis_tx["unit"], "m")
         self.assertFalse(pelvis_tx["is_angle"])
         self.assertTrue(pelvis_tx["is_auxiliary"])
         self.assertFalse(pelvis_tx["is_plottable"])
+        self.assertFalse(pelvis_tx["is_primary_rom_metric"])
         knee_beta = measure_metadata("knee_angle_r_beta", ik)
         self.assertTrue(knee_beta["is_auxiliary"])
         self.assertFalse(knee_beta["is_plottable"])
@@ -184,7 +293,7 @@ class CoreTests(unittest.TestCase):
                 "hip_adduction_l": [1.0, 6.0],
             }
         )
-        kind = {"kind_short": "OpenSim IK 关节角（高级）", "kind": "OpenSim IK 关节角（高级）", "kind_note": ""}
+        kind = {"kind_short": "OpenSim IK 关节活动角（高级）", "kind": "OpenSim IK 关节活动角（高级）", "kind_note": ""}
         stats = angle_statistics(df, kind, report_details=True)
         self.assertEqual(
             list(stats["angle"]),
