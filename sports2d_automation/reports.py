@@ -33,6 +33,13 @@ IMPORTANT_KEYWORDS = (
     "trunk",
 )
 
+REPORT_TITLE = "Sports2D 运动学分析报告"
+ROM_NOTE = (
+    "本报告中的 ROM（range of motion）表示当前分析时间范围内该指标的最大值减最小值，"
+    "单位为度。它是本次视频片段中实际观测到的角度变化范围，不是临床或解剖学意义上的"
+    "最大关节活动度，也不代表受试者的生理活动上限。"
+)
+
 
 def read_mot(mot_path: Path) -> pd.DataFrame:
     lines = mot_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -106,6 +113,8 @@ def collect_quality_diagnostics(output_dir: Path, config: dict[str, Any]) -> dic
         insights["ik_status"] = "not_run"
 
     visible_side = [str(v).lower() for v in base.get("visible_side", [])]
+    if visible_side:
+        insights["configured_visible_side"] = ", ".join(visible_side)
     if any(side in {"front", "back"} for side in visible_side):
         warnings.append(
             "可见侧设置为 front/back。Sports2D 原生角度仍是视频平面角，"
@@ -201,11 +210,11 @@ def write_html_report(
     del trc_data
     report_path.parent.mkdir(parents=True, exist_ok=True)
     plotly_js = get_plotlyjs()
-    motion_payload = [_motion_payload(path, df) for path, df in motions]
+    quality_payload = quality or {}
+    motion_payload = [_motion_payload(path, df, quality_payload) for path, df in motions]
     figs = [_motion_figure(payload) for payload in motion_payload]
     fig_json = [json.loads(pio.to_json(fig, validate=False)) for fig in figs]
     video_rel = _relative_posix(video_path, report_path.parent) if video_path else ""
-    quality_payload = quality or {}
     serializable_motion_payload = [
         {key: value for key, value in payload.items() if key != "df"} for payload in motion_payload
     ]
@@ -214,7 +223,7 @@ def write_html_report(
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{html.escape(title)} - Sports2D 运动学报告</title>
+  <title>{REPORT_TITLE}</title>
   <style>
     :root {{ color-scheme: light; --bg:#f5f7fa; --panel:#ffffff; --ink:#17202a; --muted:#5f6b7a; --line:#d7dee8; --accent:#0f766e; --accent-soft:#e6f4f1; --warn:#a15c07; --warn-soft:#fff4df; --bad:#b42318; --bad-soft:#fff0ee; --good:#047857; --good-soft:#e8f7ef; }}
     * {{ box-sizing:border-box; }}
@@ -223,6 +232,7 @@ def write_html_report(
     h1 {{ margin:0 0 6px; font-size:24px; font-weight:700; letter-spacing:0; }}
     h2 {{ margin:0 0 10px; font-size:18px; font-weight:700; letter-spacing:0; }}
     h3 {{ margin:0 0 8px; font-size:15px; font-weight:700; letter-spacing:0; }}
+    .header-row {{ display:flex; align-items:flex-start; justify-content:space-between; gap:18px; max-width:1480px; margin:0 auto; }}
     main {{ max-width:1480px; margin:0 auto; padding:18px 24px 32px; display:grid; grid-template-columns:minmax(420px, 0.95fr) minmax(480px, 1.15fr); gap:16px; }}
     section {{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; min-width:0; }}
     .full {{ grid-column:1 / -1; }}
@@ -244,10 +254,15 @@ def write_html_report(
     .metric-card dd {{ margin:0; text-align:right; font-variant-numeric:tabular-nums; }}
     .seek-button {{ border:1px solid var(--line); background:#fff; border-radius:6px; padding:3px 7px; cursor:pointer; font-size:12px; }}
     .quality {{ display:grid; grid-template-columns:190px minmax(0, 1fr); gap:14px; align-items:start; }}
+    .quality-summary {{ flex:0 1 520px; border:1px solid var(--line); border-radius:8px; padding:11px 12px; background:#fff; }}
+    .quality-summary-row {{ display:flex; align-items:center; justify-content:space-between; gap:10px; }}
+    .quality-summary-text {{ margin:8px 0 0; color:var(--muted); font-size:13px; }}
     .badge {{ display:inline-block; border-radius:999px; padding:5px 10px; color:#fff; background:var(--muted); font-weight:700; }}
     .badge.good {{ background:var(--good); }}
     .badge.warn {{ background:var(--warn); }}
     .badge.fail {{ background:var(--bad); }}
+    .icon-button {{ display:inline-flex; align-items:center; justify-content:center; min-width:32px; min-height:32px; border:1px solid var(--line); border-radius:999px; background:#fff; color:var(--ink); font-weight:700; cursor:pointer; }}
+    .icon-button:hover, .icon-button:focus-visible {{ border-color:var(--accent); outline:2px solid var(--accent-soft); outline-offset:2px; }}
     .info-grid {{ display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:10px; }}
     .info-card {{ border:1px solid var(--line); border-radius:8px; padding:12px; background:#fff; }}
     .info-card.good {{ background:var(--good-soft); border-color:#b7e4cc; }}
@@ -257,18 +272,34 @@ def write_html_report(
     table {{ width:100%; border-collapse:collapse; font-size:13px; }}
     th, td {{ border-bottom:1px solid var(--line); padding:7px 8px; text-align:right; vertical-align:top; }}
     th:first-child, td:first-child {{ text-align:left; }}
-    .definition-list {{ display:grid; gap:8px; }}
-    .definition-item {{ border-bottom:1px solid var(--line); padding:8px 0; }}
-    .definition-item:last-child {{ border-bottom:0; }}
-    .definition-item strong {{ display:block; margin-bottom:3px; }}
-    @media (max-width: 980px) {{ main {{ grid-template-columns:1fr; padding:12px; }} .quality {{ grid-template-columns:1fr; }} .plot {{ height:460px; }} }}
+    th.metric-col, td.metric-col {{ text-align:left; min-width:190px; }}
+    .metric-name {{ display:inline-flex; align-items:center; gap:6px; }}
+    .metric-info {{ min-width:24px; min-height:24px; font-size:12px; }}
+    .table-wrap {{ overflow-x:auto; max-width:100%; }}
+    .stats-table {{ min-width:920px; }}
+    .quality-table {{ min-width:720px; table-layout:fixed; }}
+    .quality-table th, .quality-table td {{ word-break:break-word; overflow-wrap:anywhere; }}
+    .modal-backdrop {{ position:fixed; inset:0; z-index:1000; display:flex; align-items:center; justify-content:center; padding:24px; background:rgba(15, 23, 42, 0.58); }}
+    .modal-backdrop[hidden] {{ display:none; }}
+    .modal-panel {{ width:min(920px, 100%); max-height:86vh; overflow:auto; border-radius:10px; background:#fff; border:1px solid var(--line); box-shadow:0 24px 60px rgba(15, 23, 42, 0.24); }}
+    .modal-header {{ display:flex; align-items:flex-start; justify-content:space-between; gap:14px; padding:16px 18px 10px; border-bottom:1px solid var(--line); }}
+    .modal-content {{ padding:16px 18px 18px; }}
+    .modal-content p {{ margin:0 0 10px; }}
+    .modal-content dl {{ display:grid; grid-template-columns:140px minmax(0, 1fr); gap:8px 14px; margin:0; }}
+    .modal-content dt {{ color:var(--muted); font-weight:700; }}
+    .modal-content dd {{ margin:0; }}
+    @media (max-width: 980px) {{ .header-row {{ flex-direction:column; }} main {{ grid-template-columns:1fr; padding:12px; }} .quality {{ grid-template-columns:1fr; }} .plot {{ height:460px; }} .modal-content dl {{ grid-template-columns:1fr; }} }}
   </style>
   <script>{plotly_js}</script>
 </head>
 <body>
   <header>
-    <h1>{html.escape(title)} - Sports2D 运动学报告</h1>
-    <div class="muted">本报告以二维视频平面角为核心输出。所有角度解释均围绕 Sports2D 的关键点几何定义展开；不再展示三维骨架模型，以避免把单目估计误解为可靠三维运动。</div>
+    <div class="header-row">
+      <div>
+        <h1>{REPORT_TITLE}</h1>
+      </div>
+      {_quality_summary_html(quality_payload)}
+    </div>
   </header>
   <main>
     <section>
@@ -288,18 +319,30 @@ def write_html_report(
       <div id="metricCards" class="cards"></div>
     </section>
     <section class="full">
-      <h2>质量诊断与解释边界</h2>
-      {_quality_html(quality_payload)}
-    </section>
-    <section class="full">
-      <h2>角度定义与动作含义</h2>
-      <div id="definitionList" class="definition-list"></div>
-    </section>
-    <section class="full">
       <h2>完整统计表</h2>
       <div id="statsTable"></div>
     </section>
   </main>
+  <div id="qualityModal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="qualityModalTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="qualityModalTitle">质量诊断与解释边界</h2>
+        <button class="icon-button" type="button" data-close-modal aria-label="关闭质量诊断">×</button>
+      </div>
+      <div class="modal-content">
+        {_quality_detail_html(quality_payload)}
+      </div>
+    </div>
+  </div>
+  <div id="metricModal" class="modal-backdrop" hidden role="dialog" aria-modal="true" aria-labelledby="metricModalTitle">
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h2 id="metricModalTitle">指标解释</h2>
+        <button class="icon-button" type="button" data-close-modal aria-label="关闭指标解释">×</button>
+      </div>
+      <div id="metricModalContent" class="modal-content"></div>
+    </div>
+  </div>
   <script>
     const motionPayload = {json.dumps(serializable_motion_payload, ensure_ascii=False)};
     const figPayload = {json.dumps(fig_json, ensure_ascii=False)};
@@ -309,7 +352,10 @@ def write_html_report(
     const controls = document.getElementById('metricControls');
     const cards = document.getElementById('metricCards');
     const statsTable = document.getElementById('statsTable');
-    const definitions = document.getElementById('definitionList');
+    const metricModal = document.getElementById('metricModal');
+    const metricModalTitle = document.getElementById('metricModalTitle');
+    const metricModalContent = document.getElementById('metricModalContent');
+    const qualityModal = document.getElementById('qualityModal');
     let currentIndex = 0;
 
     function escapeHtml(value) {{
@@ -336,7 +382,6 @@ def write_html_report(
       [...tabs.children].forEach((button, i) => button.classList.toggle('active', i === index));
       renderMetricControls(index);
       renderMetricCards(index);
-      renderDefinitions(index);
       statsTable.innerHTML = motionPayload[index].stats_html;
       plot.on('plotly_hover', event => {{
         const x = event.points && event.points[0] ? Number(event.points[0].x) : NaN;
@@ -360,7 +405,7 @@ def write_html_report(
           applyMetricSelection(currentIndex);
         }});
         label.appendChild(input);
-        label.appendChild(document.createTextNode(stat.display_name || stat.angle));
+        label.appendChild(document.createTextNode(stat.angle));
         controls.appendChild(label);
       }});
       applyMetricSelection(index);
@@ -384,7 +429,7 @@ def write_html_report(
         <article class="metric-card">
           <div class="label">${{escapeHtml(stat.kind_short)}} · ${{escapeHtml(stat.movement_label)}}</div>
           <div class="value">${{fmt(stat.rom)}}° ROM</div>
-          <h3>${{escapeHtml(stat.display_name || stat.angle)}}</h3>
+          <h3><span>${{escapeHtml(stat.angle)}}</span> <button class="icon-button metric-info" type="button" data-angle="${{escapeHtml(stat.angle)}}" aria-label="查看 ${{escapeHtml(stat.angle)}} 的指标解释">i</button></h3>
           <p class="muted">${{escapeHtml(stat.description)}}</p>
           <dl>
             <dt>最小值</dt><dd>${{fmt(stat.min)}}° <button class="seek-button" data-time="${{stat.time_at_min}}">到 ${{fmt(stat.time_at_min, 2)}}s</button></dd>
@@ -396,14 +441,35 @@ def write_html_report(
       `).join('');
     }}
 
-    function renderDefinitions(index) {{
-      const rows = motionPayload[index].stats;
-      definitions.innerHTML = rows.map(stat => `
-        <div class="definition-item">
-          <strong>${{escapeHtml(stat.display_name || stat.angle)}}：${{escapeHtml(stat.movement_label)}}</strong>
-          <div class="muted">${{escapeHtml(stat.description)}} ${{escapeHtml(stat.interpretation)}}</div>
-        </div>
-      `).join('');
+    function findStat(angle) {{
+      return (motionPayload[currentIndex].stats || []).find(stat => stat.angle === angle);
+    }}
+
+    function openModal(modal) {{
+      if (!modal) return;
+      modal.hidden = false;
+      const close = modal.querySelector('[data-close-modal]');
+      if (close) close.focus();
+    }}
+
+    function closeModal(modal) {{
+      if (modal) modal.hidden = true;
+    }}
+
+    function openMetricModal(stat) {{
+      if (!stat) return;
+      metricModalTitle.textContent = stat.angle;
+      metricModalContent.innerHTML = `
+        <dl>
+          <dt>动作含义</dt><dd>${{escapeHtml(stat.movement_label)}}</dd>
+          <dt>数据来源</dt><dd>${{escapeHtml(stat.kind)}}。${{escapeHtml(stat.kind_note || '')}}</dd>
+          <dt>计算定义</dt><dd>${{escapeHtml(stat.description)}}</dd>
+          <dt>解释边界</dt><dd>${{escapeHtml(stat.interpretation)}}</dd>
+          <dt>拍摄平面提示</dt><dd>${{escapeHtml(stat.camera_note)}}</dd>
+          <dt>ROM 说明</dt><dd>${{escapeHtml(stat.rom_note)}}</dd>
+        </dl>
+      `;
+      openModal(metricModal);
     }}
 
     motionPayload.forEach((item, index) => {{
@@ -415,7 +481,31 @@ def write_html_report(
     }});
     cards.addEventListener('click', event => {{
       const button = event.target.closest('button[data-time]');
-      if (button) seekTo(button.dataset.time);
+      if (button) {{
+        seekTo(button.dataset.time);
+        return;
+      }}
+      const info = event.target.closest('button.metric-info');
+      if (info) openMetricModal(findStat(info.dataset.angle));
+    }});
+    statsTable.addEventListener('click', event => {{
+      const info = event.target.closest('button.metric-info');
+      if (info) openMetricModal(findStat(info.dataset.angle));
+    }});
+    document.getElementById('openQualityDetail')?.addEventListener('click', () => openModal(qualityModal));
+    document.querySelectorAll('[data-close-modal]').forEach(button => {{
+      button.addEventListener('click', () => closeModal(button.closest('.modal-backdrop')));
+    }});
+    document.querySelectorAll('.modal-backdrop').forEach(modal => {{
+      modal.addEventListener('click', event => {{
+        if (event.target === modal) closeModal(modal);
+      }});
+    }});
+    document.addEventListener('keydown', event => {{
+      if (event.key === 'Escape') {{
+        closeModal(metricModal);
+        closeModal(qualityModal);
+      }}
     }});
     if (figPayload.length) renderMotion(0);
   </script>
@@ -468,11 +558,16 @@ def write_excel_report(
         pd.DataFrame(files).to_excel(writer, sheet_name="输出文件", index=False)
 
 
-def angle_statistics(df: pd.DataFrame, kind: dict[str, str] | None = None) -> pd.DataFrame:
+def angle_statistics(
+    df: pd.DataFrame,
+    kind: dict[str, str] | None = None,
+    quality: dict[str, Any] | None = None,
+) -> pd.DataFrame:
     rows = []
     if "time" not in df.columns:
         return pd.DataFrame(rows)
     kind = kind or {"kind_short": "数据", "kind": "运动数据", "kind_note": ""}
+    camera_note = _camera_plane_note(quality)
     for column in df.columns:
         if column == "time":
             continue
@@ -481,15 +576,19 @@ def angle_statistics(df: pd.DataFrame, kind: dict[str, str] | None = None) -> pd
             continue
         min_idx = series.idxmin()
         max_idx = series.idxmax()
-        meta = measure_metadata(column, kind)
+        meta = measure_metadata(column, kind, camera_note)
         rows.append(
             {
                 "angle": column,
                 "display_name": meta["display_name"],
                 "kind_short": kind["kind_short"],
+                "kind": kind.get("kind", kind["kind_short"]),
+                "kind_note": kind.get("kind_note", ""),
                 "movement_label": meta["movement_label"],
                 "description": meta["description"],
                 "interpretation": meta["interpretation"],
+                "camera_note": meta["camera_note"],
+                "rom_note": ROM_NOTE,
                 "min": float(series.min()),
                 "time_at_min": float(df.loc[min_idx, "time"]),
                 "max": float(series.max()),
@@ -517,57 +616,63 @@ def classify_motion_file(path: Path) -> dict[str, str]:
     }
 
 
-def measure_metadata(name: str, kind: dict[str, str]) -> dict[str, str]:
-    display = _display_measure_name(name)
+def measure_metadata(
+    name: str,
+    kind: dict[str, str],
+    camera_note: str | None = None,
+) -> dict[str, str]:
+    display = name.strip()
     lower = name.lower()
+    camera_note = camera_note or kind.get("camera_note") or _camera_plane_note(None)
     if kind["kind_short"] == "OpenSim IK":
-        return _opensim_measure_metadata(name, display, lower)
-    return _sports2d_measure_metadata(name, display, lower)
+        return _opensim_measure_metadata(name, display, lower, camera_note)
+    return _sports2d_measure_metadata(name, display, lower, camera_note)
 
 
-def _sports2d_measure_metadata(name: str, display: str, lower: str) -> dict[str, str]:
+def _sports2d_measure_metadata(name: str, display: str, lower: str, camera_note: str) -> dict[str, str]:
     side = "右侧" if "right" in lower else "左侧" if "left" in lower else "中线/整体"
     if "ankle" in lower:
         label = f"{side}踝背屈/跖屈趋势"
-        desc = "Sports2D 用足跟、大脚趾、踝和膝在视频平面中的位置计算踝关节角。"
-        interp = "侧面拍摄时主要反映踝背屈与跖屈趋势；正面或斜向拍摄时只能解释为视频平面内角度。"
+        desc = "Sports2D 使用足跟、大脚趾、踝和膝等二维关键点在视频画面中的几何关系计算踝关节平面角。该值描述的是画面平面内的小腿与足部之间的夹角变化。"
+        interp = "在标准侧向拍摄且运动主要发生在矢状面时，可作为踝背屈/跖屈趋势的参考；在正面、背面或明显斜向拍摄时，不应解释为真实三维踝关节背屈角或跖屈角。"
     elif "knee" in lower:
         label = f"{side}膝屈曲/伸展趋势"
-        desc = "该角度由髋、膝、踝三个关键点在视频平面中的夹角计算。"
-        interp = "数值变化可描述膝关节在拍摄平面内的屈伸过程；摄像机不在矢状面时不要直接当作矢状面膝屈曲角。"
+        desc = "Sports2D 根据髋、膝、踝三个二维关键点计算膝关节在视频平面内的夹角。该指标反映大腿与小腿在画面中的相对折叠程度。"
+        interp = "侧向拍摄时通常用于描述膝屈曲/伸展趋势；正面或背面拍摄时，它更接近画面内的投影夹角，不能直接等同于矢状面膝屈曲角。"
     elif "hip" in lower:
         label = f"{side}髋屈曲/伸展趋势"
-        desc = "该角度由膝、髋、肩三个关键点在视频平面中的夹角计算。"
-        interp = "侧面拍摄时可近似描述髋屈伸趋势；正面拍摄时会混入外展、躯干侧倾和透视影响。"
+        desc = "Sports2D 以膝、髋、肩三个二维关键点形成的夹角描述髋部相对躯干和下肢的画面内角度变化。"
+        interp = "侧向拍摄且躯干与下肢主要在矢状面运动时，可用于观察髋屈曲/伸展趋势；正面、背面或斜向拍摄会混入髋外展、躯干侧倾和透视投影影响。"
     elif "shoulder" in lower:
         label = f"{side}肩屈曲/伸展趋势"
-        desc = "该角度由髋、肩、肘三个关键点在视频平面中的夹角计算。"
-        interp = "可用于观察上臂相对躯干的平面内运动；它不是肩关节完整三维屈曲、外展或旋转分解。"
+        desc = "Sports2D 通过髋、肩、肘三个二维关键点计算上臂相对躯干的画面内夹角。"
+        interp = "该指标适合观察上臂相对躯干在视频平面内的运动趋势；它不是肩关节三维屈曲、外展、内外旋的分解结果。"
     elif "elbow" in lower:
         label = f"{side}肘屈曲/伸展趋势"
-        desc = "该角度由腕、肘、肩三个关键点在视频平面中的夹角计算。"
-        interp = "主要反映肘关节在画面平面内的屈伸趋势，受前臂旋前旋后和透视影响。"
+        desc = "Sports2D 根据腕、肘、肩三个二维关键点计算肘关节在视频平面内的夹角。"
+        interp = "多数情况下可用于描述肘屈曲/伸展趋势，但前臂旋前/旋后、遮挡和透视投影会改变二维关键点位置，从而影响该角度。"
     elif "wrist" in lower:
         label = f"{side}腕部平面角"
-        desc = "该角度来自腕部相邻关键点在视频平面中的几何关系。"
-        interp = "腕部关键点更容易受遮挡和检测噪声影响，应优先结合处理后视频核对。"
+        desc = "该指标来自腕部及相邻肢段关键点在视频平面中的几何关系，通常比髋、膝、踝等大关节更容易受到关键点检测误差影响。"
+        interp = "腕部角度应结合处理后视频逐段核对，尤其是在手部遮挡、快速摆动或器械遮挡明显时，不宜单独作为结论依据。"
     elif any(segment in lower for segment in ["foot", "shank", "thigh", "pelvis", "trunk", "head", "arm", "forearm"]):
         label = "节段相对水平线角度"
-        desc = "节段角表示对应身体节段在视频平面中相对水平线的逆时针角度。"
-        interp = "它描述的是节段姿态，不是关节夹角；摄像机倾斜时需关注地面角校正是否合理。"
+        desc = "节段角表示对应身体节段在视频平面中相对水平线的方向角，通常按画面坐标系中的逆时针方向计算。"
+        interp = "节段角描述节段姿态，不是关节夹角。若摄像机存在倾斜、视频被旋转或地面角校正不准确，节段角会首先受到影响。"
     else:
         label = "视频平面角"
-        desc = "该列来自 Sports2D MOT 文件，表示视频平面中的几何角度。"
-        interp = "请结合列名、拍摄方向和处理后视频解释，不应自动视为三维解剖角。"
+        desc = "该列来自 Sports2D 输出的运动学文件，表示由二维关键点或节段方向计算得到的视频平面几何角。"
+        interp = "应结合列名、拍摄方向、处理后视频和质量诊断解释该指标，不应自动视为三维解剖角或 OpenSim 模型坐标。"
     return {
         "display_name": display,
         "movement_label": label,
         "description": desc,
-        "interpretation": interp,
+        "interpretation": f"{interp} {camera_note}",
+        "camera_note": camera_note,
     }
 
 
-def _opensim_measure_metadata(name: str, display: str, lower: str) -> dict[str, str]:
+def _opensim_measure_metadata(name: str, display: str, lower: str, camera_note: str) -> dict[str, str]:
     if "hip_flexion" in lower:
         label = "髋屈曲/伸展坐标"
     elif "hip_adduction" in lower:
@@ -597,9 +702,46 @@ def _opensim_measure_metadata(name: str, display: str, lower: str) -> dict[str, 
     return {
         "display_name": display,
         "movement_label": label,
-        "description": "该列来自 OpenSim 逆运动学 MOT 文件，是模型坐标而不是 Sports2D 原生 2D 角度。",
-        "interpretation": "只有当 marker error、尺度、拍摄方向和标定均合理时，才建议进一步按三维模型坐标解释。",
+        "description": "该列来自 OpenSim 逆运动学 MOT 文件，是模型坐标而不是 Sports2D 原生 2D 视频平面角。",
+        "interpretation": "只有当 marker error、人体尺度、拍摄方向、标定和模型匹配均合理时，才建议进一步按三维模型坐标解释。若质量诊断提示异常，应优先信任处理后视频中的 2D 骨架和 Sports2D 原生平面角，不应把 MOT 动作作为定量结论。",
+        "camera_note": camera_note,
     }
+
+
+def _camera_plane_note(quality: dict[str, Any] | None) -> str:
+    if not quality:
+        return (
+            "当前报告未获得明确的拍摄方向诊断；请以处理后视频中的骨架方向、受试者可见侧和实际拍摄机位为准。"
+            "在拍摄方向无法确认时，应将 Sports2D 原生角度解释为视频平面角，而不是特定解剖平面的屈伸、外展或旋转角。"
+        )
+    insights = quality.get("run_log_insights", {}) or {}
+    seen_from = str(insights.get("sports2d_seen_from", "")).strip().lower()
+    configured = str(insights.get("configured_visible_side", "")).strip().lower()
+    seen_tokens = seen_from.split()
+    configured_tokens = configured.replace(",", " ").split()
+    if any(token in seen_tokens for token in ["front", "back"]) or any(
+        token in configured_tokens for token in ["front", "back"]
+    ):
+        return (
+            "质量诊断提示当前数据接近正面或背面视角。此时髋、膝、踝等指标主要反映画面平面内的投影几何关系，"
+            "不应解释为矢状面屈曲/伸展角；它们更适合用于观察左右对称性、额状面趋势或关键点稳定性。"
+        )
+    if any(token in seen_tokens for token in ["right", "left", "side"]) or any(
+        token in configured_tokens for token in ["right", "left", "side"]
+    ):
+        return (
+            "质量诊断提示当前数据接近侧向视角。若摄像机基本垂直于受试者运动平面，髋、膝、踝等下肢指标通常可作为"
+            "矢状面屈曲/伸展趋势的二维近似；若存在明显斜拍、转体或出平面运动，仍应按视频平面投影角解释。"
+        )
+    if "auto" in configured_tokens or "auto" in seen_tokens:
+        return (
+            "可见侧设置包含 auto，拍摄平面需要通过处理后视频和日志人工复核。若 Sports2D 的方向判断与真实机位不一致，"
+            "指标解释应以实际机位为准，并避免直接套用矢状面或额状面术语。"
+        )
+    return (
+        "当前报告未获得明确的拍摄方向诊断；请结合处理后视频、受试者可见侧和实际摄像机位置解释。"
+        "在方向不确定时，Sports2D 原生指标应统一解释为视频平面内的二维角度。"
+    )
 
 
 def _load_motion_files(sports_dir: Path) -> list[tuple[Path, pd.DataFrame]]:
@@ -628,12 +770,14 @@ def _prepare_report_video(sports_dir: Path, log: LogCallback | None) -> Path | N
     )
 
 
-def _motion_payload(path: Path, df: pd.DataFrame) -> dict[str, Any]:
+def _motion_payload(path: Path, df: pd.DataFrame, quality: dict[str, Any] | None = None) -> dict[str, Any]:
     safe = df.copy()
     for column in safe.columns:
         safe[column] = pd.to_numeric(safe[column], errors="coerce")
     kind = classify_motion_file(path)
-    stats = angle_statistics(safe, kind)
+    camera_note = _camera_plane_note(quality)
+    kind["camera_note"] = camera_note
+    stats = angle_statistics(safe, kind, quality)
     stats_records = _records(stats)
     return {
         "name": path.stem,
@@ -642,6 +786,7 @@ def _motion_payload(path: Path, df: pd.DataFrame) -> dict[str, Any]:
         "stats_html": _stats_table_html(stats),
         "default_metrics": _default_metrics(stats_records),
         "df": safe,
+        "camera_note": camera_note,
         **kind,
     }
 
@@ -680,36 +825,94 @@ def _stats_table_html(stats: pd.DataFrame) -> str:
     display = stats.copy()
     for col in ["min", "time_at_min", "max", "time_at_max", "mean", "std", "rom"]:
         display[col] = display[col].map(lambda v: f"{v:.3f}")
-    headers = ["指标", "动作含义", "最小值", "最小值时间", "最大值", "最大值时间", "均值", "ROM"]
-    columns = [
-        "display_name",
-        "movement_label",
-        "min",
-        "time_at_min",
-        "max",
-        "time_at_max",
-        "mean",
-        "rom",
+    headers = [
+        "Metric",
+        "动作含义",
+        "Min (deg)",
+        "Time@Min (s)",
+        "Max (deg)",
+        "Time@Max (s)",
+        "Mean (deg)",
+        "ROM (deg)",
     ]
-    rows = ["<table><thead><tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr></thead><tbody>"]
+    rows = [
+        "<div class='table-wrap'><table class='stats-table'><thead><tr>"
+        + "".join(f"<th>{h}</th>" for h in headers)
+        + "</tr></thead><tbody>"
+    ]
     for _, row in display.iterrows():
-        rows.append("<tr>" + "".join(f"<td>{html.escape(str(row[c]))}</td>" for c in columns) + "</tr>")
-    rows.append("</tbody></table>")
+        angle = str(row["angle"])
+        metric = (
+            "<span class='metric-name'>"
+            f"{html.escape(angle)}"
+            f"<button class='icon-button metric-info' type='button' data-angle='{html.escape(angle, quote=True)}' "
+            f"aria-label='查看 {html.escape(angle, quote=True)} 的指标解释'>i</button>"
+            "</span>"
+        )
+        cells = [
+            metric,
+            html.escape(str(row["movement_label"])),
+            html.escape(str(row["min"])),
+            html.escape(str(row["time_at_min"])),
+            html.escape(str(row["max"])),
+            html.escape(str(row["time_at_max"])),
+            html.escape(str(row["mean"])),
+            html.escape(str(row["rom"])),
+        ]
+        rows.append(
+            "<tr>"
+            + "".join(
+                f"<td class='metric-col'>{cell}</td>" if idx == 0 else f"<td>{cell}</td>"
+                for idx, cell in enumerate(cells)
+            )
+            + "</tr>"
+        )
+    rows.append("</tbody></table></div>")
     return "".join(rows)
 
 
-def _quality_html(quality: dict[str, Any]) -> str:
+def _quality_status_parts(quality: dict[str, Any]) -> tuple[str, str]:
     status = quality.get("status", "unknown")
     label = {"pass": "通过", "warn": "注意", "fail": "异常", "unknown": "未评估"}.get(status, status)
     badge_class = {"pass": "good", "warn": "warn", "fail": "fail"}.get(status, "")
+    return label, badge_class
+
+
+def _quality_summary_html(quality: dict[str, Any]) -> str:
+    label, badge_class = _quality_status_parts(quality)
+    warnings = quality.get("warnings") or []
+    marker_rows = quality.get("marker_error_logs") or []
+    if warnings:
+        summary = f"发现 {len(warnings)} 条需要复核的质量提示。请在解释角度曲线前查看完整诊断。"
+    elif marker_rows:
+        summary = "已读取 OpenSim marker error 日志；请结合完整诊断判断 IK/MOT 是否适合进一步解释。"
+    else:
+        summary = "未发现明确质量警告。仍建议先核对处理后视频中的 2D 骨架稳定性和拍摄方向。"
+    return (
+        "<div class='quality-summary' aria-label='质量诊断与解释边界摘要'>"
+        "<div class='quality-summary-row'>"
+        "<div>"
+        "<strong>质量诊断与解释边界</strong><br>"
+        f"<span class='badge {badge_class}'>{html.escape(label)}</span>"
+        "</div>"
+        "<button id='openQualityDetail' class='icon-button' type='button' aria-label='查看完整质量诊断与解释边界'>i</button>"
+        "</div>"
+        f"<p class='quality-summary-text'>{html.escape(summary)}</p>"
+        "</div>"
+    )
+
+
+def _quality_detail_html(quality: dict[str, Any]) -> str:
+    status = quality.get("status", "unknown")
+    label, badge_class = _quality_status_parts(quality)
     warnings = quality.get("warnings") or ["未发现明确警告。仍建议先核对处理后视频中的 2D 骨架质量。"]
     notes = quality.get("angle_notes") or []
     marker_rows = quality.get("marker_error_logs") or []
     marker_html = ""
     if marker_rows:
         marker_html = (
-            "<table><thead><tr><th>日志</th><th>状态</th><th>帧数</th>"
-            "<th>RMS最大(m)</th><th>最大误差(m)</th></tr></thead><tbody>"
+            "<div class='table-wrap'><table class='quality-table'><thead><tr><th>日志</th><th>状态</th><th>帧数</th>"
+            "<th>RMS 最大值 (m)</th><th>最大误差 (m)</th></tr></thead><tbody>"
         )
         for row in marker_rows:
             marker_html += (
@@ -721,7 +924,7 @@ def _quality_html(quality: dict[str, Any]) -> str:
                 f"<td>{row['max_max']:.3f}</td>"
                 "</tr>"
             )
-        marker_html += "</tbody></table>"
+        marker_html += "</tbody></table></div>"
     else:
         marker_html = (
             "<p class='muted'>未找到 OpenSim marker error。通常表示未运行 IK，"
@@ -731,7 +934,7 @@ def _quality_html(quality: dict[str, Any]) -> str:
     return (
         "<div class='quality'>"
         f"<div><span class='badge {badge_class}'>{html.escape(label)}</span>"
-        "<p class='note'>质量等级用于提醒解释边界，不会自动证明或否定所有曲线。</p></div>"
+        f"<p class='note'>当前质量状态为 {html.escape(str(status))}。质量等级用于提示解释边界，不会自动证明或否定所有角度曲线；最终仍需结合处理后视频、日志和实际拍摄条件复核。</p></div>"
         "<div class='info-grid'>"
         f"<div class='info-card {card_class}'><h3>主要提示</h3><ul>"
         + "".join(f"<li>{html.escape(str(item))}</li>" for item in warnings)

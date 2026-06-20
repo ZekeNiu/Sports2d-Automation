@@ -103,11 +103,26 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(set(stats["angle"]), {"Right knee", "Left knee"})
 
             html_path = root / "report.html"
-            write_html_report(html_path, "demo", [(mot, df)], None, None)
+            quality = {
+                "status": "warn",
+                "warnings": ["测试质量提示"],
+                "angle_notes": [],
+                "marker_error_logs": [],
+                "run_log_insights": {"sports2d_seen_from": "front", "configured_visible_side": "right"},
+            }
+            write_html_report(html_path, "demo", [(mot, df)], None, None, quality)
             html_text = html_path.read_text(encoding="utf-8")
-            self.assertIn("Sports2D 运动学报告", html_text)
+            self.assertIn("<title>Sports2D 运动学分析报告</title>", html_text)
+            self.assertIn("<h1>Sports2D 运动学分析报告</h1>", html_text)
+            self.assertNotIn("demo - Sports2D 运动学报告", html_text)
             self.assertIn("重点关节指标", html_text)
-            self.assertIn("角度定义与动作含义", html_text)
+            self.assertIn("qualityModal", html_text)
+            self.assertIn("metricModal", html_text)
+            self.assertIn("metric-info", html_text)
+            self.assertIn("Right knee", html_text)
+            self.assertIn("ROM (deg)", html_text)
+            self.assertIn("正面或背面视角", html_text)
+            self.assertNotIn("角度定义与动作含义", html_text)
             self.assertIn("2D 视频平面角", html_text)
             self.assertNotIn("markerPlot", html_text)
             self.assertNotIn("三维标记视图", html_text)
